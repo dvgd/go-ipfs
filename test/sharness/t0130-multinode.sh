@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright (c) 2015 Jeromy Johnson
 # MIT Licensed; see the LICENSE file in this repository.
@@ -46,7 +46,7 @@ run_single_file_test() {
 
 run_random_dir_test() {
   test_expect_success "create a bunch of random files" '
-    random-files -depth=4 -dirs=5 -files=8 foobar > /dev/null
+    random-files -depth=4 -dirs=3 -files=6 foobar > /dev/null
   '
 
   test_expect_success "add those on node 2" '
@@ -67,7 +67,7 @@ run_basic_test() {
   run_single_file_test
 
   test_expect_success "shut down nodes" '
-    iptb stop
+    iptb stop && iptb_wait_stop
   '
 }
 
@@ -79,33 +79,36 @@ run_advanced_test() {
   run_random_dir_test
 
   test_expect_success "shut down nodes" '
-    iptb stop ||
-      test_fsh tail -n +1 .iptb/*/daemon.std*
+    iptb stop && iptb_wait_stop ||
+      test_fsh tail -n +1 .iptb/testbeds/default/*/daemon.std*
   '
 }
 
 test_expect_success "set up /tcp testbed" '
-  iptb init -n 5 -p 0 -f --bootstrap=none
+  iptb testbed create -type localipfs -count 5 -force -init
 '
 
-# test multiplex muxer
-export LIBP2P_MUX_PREFS="/mplex/6.7.0"
-run_advanced_test
-unset LIBP2P_MUX_PREFS
-
 # test default configuration
+run_advanced_test
+
+# test multiplex muxer
+test_expect_success "disable yamux" '
+  iptb run -- ipfs config --json Swarm.Transports.Multiplexers.Yamux false
+'
 run_advanced_test
 
 test_expect_success "set up /ws testbed" '
-  iptb init -n 5 -ws -p 0 -f --bootstrap=none
+  iptb testbed create -type localipfs -count 5 -attr listentype,ws -force -init
 '
 
-# test multiplex muxer
-export LIBP2P_MUX_PREFS="/mplex/6.7.0"
-run_advanced_test "--enable-mplex-experiment"
-unset LIBP2P_MUX_PREFS
-
 # test default configuration
+run_advanced_test
+
+# test multiplex muxer
+test_expect_success "disable yamux" '
+  iptb run -- ipfs config --json Swarm.Transports.Multiplexers.Yamux false
+'
+
 run_advanced_test
 
 

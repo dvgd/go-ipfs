@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-var DistPath = "https://ipfs.io/ipfs/QmR6d2gePmBmsqkESwjpbLrHHJGLx2qDyWysqpuNcJgsnK"
+var DistPath = "https://ipfs.io/ipfs/Qmdo5m6bpQXCayzfGghyvgXJdVHSsXsCKDUo9vWktDKq3K"
 
 func init() {
 	if dist := os.Getenv("IPFS_DIST_PATH"); dist != "" {
@@ -116,7 +116,7 @@ func verifyMigrationSupportsVersion(fsrbin string, vn int) error {
 		return nil
 	}
 
-	return fmt.Errorf("migrations binary doesnt support version %d: %s", vn, fsrbin)
+	return fmt.Errorf("migrations binary doesn't support version %d: %s", vn, fsrbin)
 }
 
 func migrationsVersion(bin string) (int, error) {
@@ -163,13 +163,13 @@ func GetLatestVersion(ipfspath, dist string) (string, error) {
 		}
 	}
 	if latest == "" {
-		return "", fmt.Errorf("couldnt find a non dev version in the list")
+		return "", fmt.Errorf("couldn't find a non dev version in the list")
 	}
 	return vs[len(vs)-1], nil
 }
 
 func httpGet(url string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("http.NewRequest error: %s", err)
 	}
@@ -259,7 +259,7 @@ func osWithVariant() (string, error) {
 	// - on standard ubuntu: stdout
 	// - on alpine: stderr (it probably doesn't know the --version flag)
 	//
-	// we supress non-zero exit codes (see last point about alpine).
+	// we suppress non-zero exit codes (see last point about alpine).
 	out, err := exec.Command("sh", "-c", "ldd --version || true").CombinedOutput()
 	if err != nil {
 		return "", err

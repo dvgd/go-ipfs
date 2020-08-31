@@ -1,10 +1,10 @@
 package coreunix
 
 import (
+	cid "github.com/ipfs/go-cid"
 	core "github.com/ipfs/go-ipfs/core"
-	dag "github.com/ipfs/go-ipfs/merkledag"
-	ft "github.com/ipfs/go-ipfs/unixfs"
-	cid "gx/ipfs/QmcZfnkapfECQGcLZaf9B79NRg7cRa9EnZh4LSbkCzwNvY/go-cid"
+	dag "github.com/ipfs/go-merkledag"
+	ft "github.com/ipfs/go-unixfs"
 )
 
 func AddMetadataTo(n *core.IpfsNode, skey string, m *ft.Metadata) (string, error) {
@@ -25,7 +25,7 @@ func AddMetadataTo(n *core.IpfsNode, skey string, m *ft.Metadata) (string, error
 	}
 
 	mdnode.SetData(mdata)
-	if err := mdnode.AddNodeLinkClean("file", nd); err != nil {
+	if err := mdnode.AddNodeLink("file", nd); err != nil {
 		return "", err
 	}
 

@@ -5,43 +5,39 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"net"
-	"net/url"
+	"net/http"
 	"os"
-	"os/signal"
-	"path/filepath"
 	"runtime/pprof"
-	"strings"
-	"sync"
-	"syscall"
 	"time"
 
+	util "github.com/ipfs/go-ipfs/cmd/ipfs/util"
 	oldcmds "github.com/ipfs/go-ipfs/commands"
 	core "github.com/ipfs/go-ipfs/core"
-	coreCmds "github.com/ipfs/go-ipfs/core/commands"
+	corecmds "github.com/ipfs/go-ipfs/core/commands"
 	corehttp "github.com/ipfs/go-ipfs/core/corehttp"
 	loader "github.com/ipfs/go-ipfs/plugin/loader"
 	repo "github.com/ipfs/go-ipfs/repo"
-	config "github.com/ipfs/go-ipfs/repo/config"
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
 
-	u "gx/ipfs/QmNiJuT8Ja3hMVpBHXv3Q6dwmperaQ6JjLtpMQgMCD7xvx/go-ipfs-util"
-	manet "gx/ipfs/QmRK2LxanhK2gZq6k6R7vk5ZoYZk8ULSSTB7FzDsMUX6CB/go-multiaddr-net"
-	logging "gx/ipfs/QmRb5jh8z2E8hMGN2tkvs1yHynUanqnZ3UeKwgN1i9P1F8/go-log"
-	ma "gx/ipfs/QmWWQ2Txc2c6tqjsBpzg5Ar652cHPGNsQQp2SejkNmkUMb/go-multiaddr"
-	osh "gx/ipfs/QmXuBJ7DR6k3rmUEKtvVMhwjmXDuJgXXPUt4LQXKBMsU93/go-os-helper"
-	"gx/ipfs/QmabLouZTZwhfALuBcssPvkzhbYGMb4394huT7HY4LQ6d3/go-ipfs-cmds"
-	"gx/ipfs/QmabLouZTZwhfALuBcssPvkzhbYGMb4394huT7HY4LQ6d3/go-ipfs-cmds/cli"
-	"gx/ipfs/QmabLouZTZwhfALuBcssPvkzhbYGMb4394huT7HY4LQ6d3/go-ipfs-cmds/http"
-	loggables "gx/ipfs/Qmf9JgVLz46pxPXwG2eWSJpkqVCcjD4rp7zCRi2KP6GTNB/go-libp2p-loggables"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/go-ipfs-cmds/cli"
+	cmdhttp "github.com/ipfs/go-ipfs-cmds/http"
+	config "github.com/ipfs/go-ipfs-config"
+	u "github.com/ipfs/go-ipfs-util"
+	logging "github.com/ipfs/go-log"
+	loggables "github.com/libp2p/go-libp2p-loggables"
+	ma "github.com/multiformats/go-multiaddr"
+	madns "github.com/multiformats/go-multiaddr-dns"
+	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 // log is the command logger
 var log = logging.Logger("cmd/ipfs")
 
-var errRequestCanceled = errors.New("request canceled")
+// declared as a var for testing purposes
+var dnsResolver = madns.DefaultResolver
 
 const (
 	EnvEnableProfiling = "IPFS_PROF"
@@ -49,16 +45,20 @@ const (
 	heapProfile        = "ipfs.memprof"
 )
 
-type cmdInvocation struct {
-	req  *cmds.Request
-	node *core.IpfsNode
-	ctx  *oldcmds.Context
-}
+func loadPlugins(repoPath string) (*loader.PluginLoader, error) {
+	plugins, err := loader.NewPluginLoader(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("error loading plugins: %s", err)
+	}
 
-type exitErr int
+	if err := plugins.Initialize(); err != nil {
+		return nil, fmt.Errorf("error initializing plugins: %s", err)
+	}
 
-func (e exitErr) Error() string {
-	return fmt.Sprint("exit code", int(e))
+	if err := plugins.Inject(); err != nil {
+		return nil, fmt.Errorf("error initializing plugins: %s", err)
+	}
+	return plugins, nil
 }
 
 // main roadmap:
@@ -89,28 +89,50 @@ func mainRet() int {
 	}
 	defer stopFunc() // to be executed as late as possible
 
-	intrh, ctx := setupInterruptHandler(ctx)
+	intrh, ctx := util.SetupInterruptHandler(ctx)
 	defer intrh.Close()
 
-	// Handle `ipfs help'
-	if len(os.Args) == 2 {
-		if os.Args[1] == "help" {
-			os.Args[1] = "-h"
-		} else if os.Args[1] == "--version" {
+	// Handle `ipfs version` or `ipfs help`
+	if len(os.Args) > 1 {
+		// Handle `ipfs --version'
+		if os.Args[1] == "--version" {
 			os.Args[1] = "version"
 		}
+
+		//Handle `ipfs help` and `ipfs help <sub-command>`
+		if os.Args[1] == "help" {
+			if len(os.Args) > 2 {
+				os.Args = append(os.Args[:1], os.Args[2:]...)
+				// Handle `ipfs help --help`
+				// append `--help`,when the command is not `ipfs help --help`
+				if os.Args[1] != "--help" {
+					os.Args = append(os.Args, "--help")
+				}
+			} else {
+				os.Args[1] = "--help"
+			}
+		}
+	} else if insideGUI() { // if no args were passed, and we're in a GUI environment
+		// launch the daemon instead of launching a ghost window
+		os.Args = append(os.Args, "daemon", "--init")
 	}
 
-	// output depends on excecutable name passed in os.Args
+	// output depends on executable name passed in os.Args
 	// so we need to make sure it's stable
 	os.Args[0] = "ipfs"
 
 	buildEnv := func(ctx context.Context, req *cmds.Request) (cmds.Environment, error) {
+		checkDebug(req)
 		repoPath, err := getRepoPath(req)
 		if err != nil {
 			return nil, err
 		}
 		log.Debugf("config path is %s", repoPath)
+
+		plugins, err := loadPlugins(repoPath)
+		if err != nil {
+			return nil, err
+		}
 
 		// this sets up the function that will initialize the node
 		// this is so that we can construct the node lazily.
@@ -118,6 +140,7 @@ func mainRet() int {
 			ConfigRoot: repoPath,
 			LoadConfig: loadConfig,
 			ReqLog:     &oldcmds.ReqLog{},
+			Plugins:    plugins,
 			ConstructNode: func() (n *core.IpfsNode, err error) {
 				if req == nil {
 					return nil, errors.New("constructing node without a request")
@@ -137,7 +160,6 @@ func mainRet() int {
 					return nil, err
 				}
 
-				n.SetLocal(true)
 				return n, nil
 			},
 		}, nil
@@ -152,6 +174,10 @@ func mainRet() int {
 	return 0
 }
 
+func insideGUI() bool {
+	return util.InsideGUI()
+}
+
 func checkDebug(req *cmds.Request) {
 	// check if user wants to debug. option OR env var.
 	debug, _ := req.Options["debug"].(bool)
@@ -164,135 +190,107 @@ func checkDebug(req *cmds.Request) {
 	}
 }
 
+func apiAddrOption(req *cmds.Request) (ma.Multiaddr, error) {
+	apiAddrStr, apiSpecified := req.Options[corecmds.ApiOption].(string)
+	if !apiSpecified {
+		return nil, nil
+	}
+	return ma.NewMultiaddr(apiAddrStr)
+}
+
 func makeExecutor(req *cmds.Request, env interface{}) (cmds.Executor, error) {
-	checkDebug(req)
-	details, err := commandDetails(req.Path, Root)
+	exe := cmds.NewExecutor(req.Root)
+	cctx := env.(*oldcmds.Context)
+
+	// Check if the command is disabled.
+	if req.Command.NoLocal && req.Command.NoRemote {
+		return nil, fmt.Errorf("command disabled: %v", req.Path)
+	}
+
+	// Can we just run this locally?
+	if !req.Command.NoLocal {
+		if doesNotUseRepo, ok := corecmds.GetDoesNotUseRepo(req.Command.Extra); doesNotUseRepo && ok {
+			return exe, nil
+		}
+	}
+
+	// Get the API option from the commandline.
+	apiAddr, err := apiAddrOption(req)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := commandShouldRunOnDaemon(*details, req, Root, env.(*oldcmds.Context))
+	// Require that the command be run on the daemon when the API flag is
+	// passed (unless we're trying to _run_ the daemon).
+	daemonRequested := apiAddr != nil && req.Command != daemonCmd
+
+	// Run this on the client if required.
+	if req.Command.NoRemote {
+		if daemonRequested {
+			// User requested that the command be run on the daemon but we can't.
+			// NOTE: We drop this check for the `ipfs daemon` command.
+			return nil, errors.New("api flag specified but command cannot be run on the daemon")
+		}
+		return exe, nil
+	}
+
+	// Finally, look in the repo for an API file.
+	if apiAddr == nil {
+		var err error
+		apiAddr, err = fsrepo.APIAddr(cctx.ConfigRoot)
+		switch err {
+		case nil, repo.ErrApiNotRunning:
+		default:
+			return nil, err
+		}
+	}
+
+	// Still no api specified? Run it on the client or fail.
+	if apiAddr == nil {
+		if req.Command.NoLocal {
+			return nil, fmt.Errorf("command must be run on the daemon: %v", req.Path)
+		}
+		return exe, nil
+	}
+
+	// Resolve the API addr.
+	apiAddr, err = resolveAddr(req.Context, apiAddr)
+	if err != nil {
+		return nil, err
+	}
+	network, host, err := manet.DialArgs(apiAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	var exctr cmds.Executor
-	if client != nil && !req.Command.External {
-		exctr = client.(cmds.Executor)
-	} else {
-		cctx := env.(*oldcmds.Context)
-		pluginpath := filepath.Join(cctx.ConfigRoot, "plugins")
-
-		// check if repo is accessible before loading plugins
-		ok, err := checkPermissions(cctx.ConfigRoot)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			if _, err := loader.LoadPlugins(pluginpath); err != nil {
-				log.Warning("error loading plugins: ", err)
-			}
-		}
-
-		exctr = cmds.NewExecutor(req.Root)
+	// Construct the executor.
+	opts := []cmdhttp.ClientOpt{
+		cmdhttp.ClientWithAPIPrefix(corehttp.APIPath),
 	}
 
-	return exctr, nil
-}
-
-func checkPermissions(path string) (bool, error) {
-	_, err := os.Open(path)
-	if os.IsNotExist(err) {
-		// repo does not exist yet - don't load plugins, but also don't fail
-		return false, nil
-	}
-	if os.IsPermission(err) {
-		// repo is not accessible. error out.
-		return false, fmt.Errorf("error opening repository at %s: permission denied", path)
+	// Fallback on a local executor if we (a) have a repo and (b) aren't
+	// forcing a daemon.
+	if !daemonRequested && fsrepo.IsInitialized(cctx.ConfigRoot) {
+		opts = append(opts, cmdhttp.ClientWithFallback(exe))
 	}
 
-	return true, nil
-}
-
-// commandDetails returns a command's details for the command given by |path|
-// within the |root| command tree.
-//
-// Returns an error if the command is not found in the Command tree.
-func commandDetails(path []string, root *cmds.Command) (*cmdDetails, error) {
-	var details cmdDetails
-	// find the last command in path that has a cmdDetailsMap entry
-	cmd := root
-	for _, cmp := range path {
-		cmd = cmd.Subcommands[cmp]
-		if cmd == nil {
-			return nil, fmt.Errorf("subcommand %s should be in root", cmp)
-		}
-
-		if cmdDetails, found := cmdDetailsMap[strings.Join(path, "/")]; found {
-			details = cmdDetails
-		}
-	}
-	return &details, nil
-}
-
-// commandShouldRunOnDaemon determines, from commmand details, whether a
-// command ought to be executed on an ipfs daemon.
-//
-// It returns a client if the command should be executed on a daemon and nil if
-// it should be executed on a client. It returns an error if the command must
-// NOT be executed on either.
-func commandShouldRunOnDaemon(details cmdDetails, req *cmds.Request, root *cmds.Command, cctx *oldcmds.Context) (http.Client, error) {
-	path := req.Path
-	// root command.
-	if len(path) < 1 {
-		return nil, nil
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+	case "unix":
+		path := host
+		host = "unix"
+		opts = append(opts, cmdhttp.ClientWithHTTPClient(&http.Client{
+			Transport: &http.Transport{
+				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", path)
+				},
+			},
+		}))
+	default:
+		return nil, fmt.Errorf("unsupported API address: %s", apiAddr)
 	}
 
-	if details.cannotRunOnClient && details.cannotRunOnDaemon {
-		return nil, fmt.Errorf("command disabled: %s", path[0])
-	}
-
-	if details.doesNotUseRepo && details.canRunOnClient() {
-		return nil, nil
-	}
-
-	// at this point need to know whether api is running. we defer
-	// to this point so that we dont check unnecessarily
-
-	// did user specify an api to use for this command?
-	apiAddrStr, _ := req.Options[coreCmds.ApiOption].(string)
-
-	client, err := getApiClient(cctx.ConfigRoot, apiAddrStr)
-	if err == repo.ErrApiNotRunning {
-		if apiAddrStr != "" && req.Command != daemonCmd {
-			// if user SPECIFIED an api, and this cmd is not daemon
-			// we MUST use it. so error out.
-			return nil, err
-		}
-
-		// ok for api not to be running
-	} else if err != nil { // some other api error
-		return nil, err
-	}
-
-	if client != nil {
-		if details.cannotRunOnDaemon {
-			// check if daemon locked. legacy error text, for now.
-			log.Debugf("Command cannot run on daemon. Checking if daemon is locked")
-			if daemonLocked, _ := fsrepo.LockedByOtherProcess(cctx.ConfigRoot); daemonLocked {
-				return nil, cmds.ClientError("ipfs daemon is running. please stop it to run this command")
-			}
-			return nil, nil
-		}
-
-		return client, nil
-	}
-
-	if details.cannotRunOnClient {
-		return nil, cmds.ClientError("must run on the ipfs daemon")
-	}
-
-	return nil, nil
+	return cmdhttp.NewClient(host, opts...), nil
 }
 
 func getRepoPath(req *cmds.Request) (string, error) {
@@ -320,7 +318,11 @@ func startProfiling() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	pprof.StartCPUProfile(ofi)
+	err = pprof.StartCPUProfile(ofi)
+	if err != nil {
+		ofi.Close()
+		return nil, err
+	}
 	go func() {
 		for range time.NewTicker(time.Second * 30).C {
 			err := writeHeapProfileToFile()
@@ -332,7 +334,7 @@ func startProfiling() (func(), error) {
 
 	stopProfiling := func() {
 		pprof.StopCPUProfile()
-		defer ofi.Close() // captured by the closure
+		ofi.Close() // captured by the closure
 	}
 	return stopProfiling, nil
 }
@@ -344,70 +346,6 @@ func writeHeapProfileToFile() error {
 	}
 	defer mprof.Close() // _after_ writing the heap profile
 	return pprof.WriteHeapProfile(mprof)
-}
-
-// IntrHandler helps set up an interrupt handler that can
-// be cleanly shut down through the io.Closer interface.
-type IntrHandler struct {
-	sig chan os.Signal
-	wg  sync.WaitGroup
-}
-
-func NewIntrHandler() *IntrHandler {
-	ih := &IntrHandler{}
-	ih.sig = make(chan os.Signal, 1)
-	return ih
-}
-
-func (ih *IntrHandler) Close() error {
-	close(ih.sig)
-	ih.wg.Wait()
-	return nil
-}
-
-// Handle starts handling the given signals, and will call the handler
-// callback function each time a signal is catched. The function is passed
-// the number of times the handler has been triggered in total, as
-// well as the handler itself, so that the handling logic can use the
-// handler's wait group to ensure clean shutdown when Close() is called.
-func (ih *IntrHandler) Handle(handler func(count int, ih *IntrHandler), sigs ...os.Signal) {
-	signal.Notify(ih.sig, sigs...)
-	ih.wg.Add(1)
-	go func() {
-		defer ih.wg.Done()
-		count := 0
-		for range ih.sig {
-			count++
-			handler(count, ih)
-		}
-		signal.Stop(ih.sig)
-	}()
-}
-
-func setupInterruptHandler(ctx context.Context) (io.Closer, context.Context) {
-	intrh := NewIntrHandler()
-	ctx, cancelFunc := context.WithCancel(ctx)
-
-	handlerFunc := func(count int, ih *IntrHandler) {
-		switch count {
-		case 1:
-			fmt.Println() // Prevent un-terminated ^C character in terminal
-
-			ih.wg.Add(1)
-			go func() {
-				defer ih.wg.Done()
-				cancelFunc()
-			}()
-
-		default:
-			fmt.Println("Received another interrupt before graceful shutdown, terminating...")
-			os.Exit(-1)
-		}
-	}
-
-	intrh.Handle(handlerFunc, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
-
-	return intrh, ctx
 }
 
 func profileIfEnabled() (func(), error) {
@@ -423,79 +361,18 @@ func profileIfEnabled() (func(), error) {
 	return func() {}, nil
 }
 
-var apiFileErrorFmt string = `Failed to parse '%[1]s/api' file.
-	error: %[2]s
-If you're sure go-ipfs isn't running, you can just delete it.
-`
-var checkIPFSUnixFmt = "Otherwise check:\n\tps aux | grep ipfs"
-var checkIPFSWinFmt = "Otherwise check:\n\ttasklist | findstr ipfs"
+func resolveAddr(ctx context.Context, addr ma.Multiaddr) (ma.Multiaddr, error) {
+	ctx, cancelFunc := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelFunc()
 
-// getApiClient checks the repo, and the given options, checking for
-// a running API service. if there is one, it returns a client.
-// otherwise, it returns errApiNotRunning, or another error.
-func getApiClient(repoPath, apiAddrStr string) (http.Client, error) {
-	var apiErrorFmt string
-	switch {
-	case osh.IsUnix():
-		apiErrorFmt = apiFileErrorFmt + checkIPFSUnixFmt
-	case osh.IsWindows():
-		apiErrorFmt = apiFileErrorFmt + checkIPFSWinFmt
-	default:
-		apiErrorFmt = apiFileErrorFmt
-	}
-
-	var addr ma.Multiaddr
-	var err error
-	if len(apiAddrStr) != 0 {
-		addr, err = ma.NewMultiaddr(apiAddrStr)
-		if err != nil {
-			return nil, err
-		}
-		if len(addr.Protocols()) == 0 {
-			return nil, fmt.Errorf("multiaddr doesn't provide any protocols")
-		}
-	} else {
-		addr, err = fsrepo.APIAddr(repoPath)
-		if err == repo.ErrApiNotRunning {
-			return nil, err
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf(apiErrorFmt, repoPath, err.Error())
-		}
-	}
-	if len(addr.Protocols()) == 0 {
-		return nil, fmt.Errorf(apiErrorFmt, repoPath, "multiaddr doesn't provide any protocols")
-	}
-	return apiClientForAddr(addr)
-}
-
-func apiClientForAddr(addr ma.Multiaddr) (http.Client, error) {
-	_, host, err := manet.DialArgs(addr)
+	addrs, err := dnsResolver.Resolve(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
 
-	return http.NewClient(host, http.ClientWithAPIPrefix(corehttp.APIPath)), nil
-}
-
-func isConnRefused(err error) bool {
-	// unwrap url errors from http calls
-	if urlerr, ok := err.(*url.Error); ok {
-		err = urlerr.Err
+	if len(addrs) == 0 {
+		return nil, errors.New("non-resolvable API endpoint")
 	}
 
-	netoperr, ok := err.(*net.OpError)
-	if !ok {
-		return false
-	}
-
-	return netoperr.Op == "dial"
-}
-
-func wrapContextCanceled(err error) error {
-	if strings.Contains(err.Error(), "request canceled") {
-		err = errRequestCanceled
-	}
-	return err
+	return addrs[0], nil
 }

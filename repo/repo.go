@@ -4,12 +4,12 @@ import (
 	"errors"
 	"io"
 
-	filestore "github.com/ipfs/go-ipfs/filestore"
+	filestore "github.com/ipfs/go-filestore"
 	keystore "github.com/ipfs/go-ipfs/keystore"
-	config "github.com/ipfs/go-ipfs/repo/config"
 
-	ds "gx/ipfs/QmPpegoMqhAEqjncrzArm7KVWAkCm78rqL2DPuNjhPrshg/go-datastore"
-	ma "gx/ipfs/QmWWQ2Txc2c6tqjsBpzg5Ar652cHPGNsQQp2SejkNmkUMb/go-multiaddr"
+	ds "github.com/ipfs/go-datastore"
+	config "github.com/ipfs/go-ipfs-config"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 var (
@@ -59,6 +59,5 @@ type Repo interface {
 // Datastore is the interface required from a datastore to be
 // acceptable to FSRepo.
 type Datastore interface {
-	ds.Batching // should be threadsafe, just be careful
-	io.Closer
+	ds.Batching // must be thread-safe
 }

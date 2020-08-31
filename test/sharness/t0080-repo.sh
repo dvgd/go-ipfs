@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright (c) 2014 Jeromy Johnson
 # MIT Licensed; see the LICENSE file in this repository.
@@ -30,11 +30,10 @@ test_expect_success "'ipfs repo gc' succeeds" '
 '
 
 test_expect_success "'ipfs repo gc' looks good (patch root)" '
-  PATCH_ROOT=QmQXirSbubiySKnqaFyfs5YzziXRB5JEVQVjU6xsd7innr &&
-  grep "removed $PATCH_ROOT" gc_out_actual
+  grep -v "removed $HASH" gc_out_actual
 '
 
-test_expect_success "'ipfs repo gc' doesnt remove file" '
+test_expect_success "'ipfs repo gc' doesn't remove file" '
   ipfs cat "$HASH" >out &&
   test_cmp out afile
 '
@@ -48,16 +47,23 @@ test_expect_success "'ipfs pin rm' output looks good" '
   test_cmp expected1 actual1
 '
 
-test_expect_failure "ipfs repo gc fully reverse ipfs add" '
+test_expect_success "ipfs repo gc fully reverse ipfs add (part 1)" '
   ipfs repo gc &&
   random 100000 41 >gcfile &&
-  disk_usage "$IPFS_PATH/blocks" >expected &&
-  hash=`ipfs add -q gcfile` &&
+  find "$IPFS_PATH/blocks" -type f -name "*.data" | sort -u > expected_blocks &&
+  hash=$(ipfs add -q gcfile) &&
   ipfs pin rm -r $hash &&
-  ipfs repo gc &&
-  disk_usage "$IPFS_PATH/blocks" >actual &&
-  test_cmp expected actual
+  ipfs repo gc
 '
+
+test_kill_ipfs_daemon
+
+test_expect_success "ipfs repo gc fully reverse ipfs add (part 2)" '
+  find "$IPFS_PATH/blocks" -type f -name "*.data" | sort -u > actual_blocks &&
+  test_cmp expected_blocks actual_blocks
+'
+
+test_launch_ipfs_daemon --offline
 
 test_expect_success "file no longer pinned" '
   ipfs pin ls --type=recursive --quiet >actual2 &&
@@ -84,7 +90,7 @@ test_expect_success "pinning directly should fail now" '
 '
 
 test_expect_success "'ipfs pin rm -r=false <hash>' should fail" '
-  echo "Error: $HASH is pinned recursively" >expected4 &&
+  echo "Error: $HASH is pinned recursively" >expected4
   test_must_fail ipfs pin rm -r=false "$HASH" 2>actual4 &&
   test_cmp expected4 actual4
 '
@@ -104,8 +110,7 @@ test_expect_success "remove direct pin" '
 
 test_expect_success "'ipfs repo gc' removes file" '
   ipfs repo gc >actual7 &&
-  grep "removed $HASH" actual7 &&
-  grep "removed $PATCH_ROOT" actual7
+  grep "removed $HASH" actual7
 '
 
 test_expect_success "'ipfs refs local' no longer shows file" '
@@ -114,8 +119,7 @@ test_expect_success "'ipfs refs local' no longer shows file" '
   grep "QmYCvbfNbCwFR45HiNP45rwJgvatpiW38D961L5qAhUM5Y" actual8 &&
   grep "$EMPTY_DIR" actual8 &&
   grep "$HASH_WELCOME_DOCS" actual8 &&
-  test_must_fail grep "$HASH" actual8 &&
-  test_must_fail grep "$PATCH_ROOT" actual8
+  test_must_fail grep "$HASH" actual8
 '
 
 test_expect_success "adding multiblock random file succeeds" '
@@ -169,14 +173,13 @@ test_expect_success "'ipfs pin ls --type=all --quiet' is correct" '
 
 test_expect_success "'ipfs refs --unique' is correct" '
   mkdir -p uniques &&
-  cd uniques &&
-  echo "content1" > file1 &&
-  echo "content1" > file2 &&
-  ipfs add -r -q . > ../add_output &&
-  ROOT=$(tail -n1 ../add_output) &&
+  echo "content1" > uniques/file1 &&
+  echo "content1" > uniques/file2 &&
+  ipfs add -r -q uniques > add_output &&
+  ROOT=$(tail -n1 add_output) &&
   ipfs refs --unique $ROOT >expected &&
-  ipfs add -q file1 >unique_hash &&
-  test_cmp expected unique_hash || test_fsh cat ../add_output
+  ipfs add -q uniques/file1 >unique_hash &&
+  test_cmp expected unique_hash || test_fsh cat add_output
 '
 
 test_expect_success "'ipfs refs --unique --recursive' is correct" '
@@ -229,12 +232,26 @@ get_field_num() {
 test_expect_success "'ipfs repo stat' succeeds" '
   ipfs repo stat > repo-stats
 '
+
 test_expect_success "repo stats came out correct" '
   grep "RepoPath" repo-stats &&
   grep "RepoSize" repo-stats &&
   grep "NumObjects" repo-stats &&
   grep "Version" repo-stats &&
   grep "StorageMax" repo-stats
+'
+
+test_expect_success "'ipfs repo stat --human' succeeds" '
+  ipfs repo stat --human > repo-stats-human
+'
+
+test_expect_success "repo stats --human came out correct" '
+  grep "RepoPath" repo-stats-human &&
+  grep -E "RepoSize:\s*([0-9]*[.])?[0-9]+\s+?(B|kB|MB|GB|TB|PB|EB)" repo-stats-human &&
+  grep "NumObjects" repo-stats-human &&
+  grep "Version" repo-stats-human &&
+  grep -E "StorageMax:\s*([0-9]*[.])?[0-9]+\s+?(B|kB|MB|GB|TB|PB|EB)" repo-stats-human ||
+  test_fsh cat repo-stats-human
 '
 
 test_expect_success "'ipfs repo stat' after adding a file" '
@@ -244,6 +261,18 @@ test_expect_success "'ipfs repo stat' after adding a file" '
 
 test_expect_success "repo stats are updated correctly" '
   test $(get_field_num "RepoSize" repo-stats-2) -ge $(get_field_num "RepoSize" repo-stats)
+'
+
+test_expect_success "'ipfs repo stat --size-only' succeeds" '
+  ipfs repo stat --size-only > repo-stats-size-only
+'
+
+test_expect_success "repo stats came out correct for --size-only" '
+  grep "RepoSize" repo-stats-size-only &&
+  grep "StorageMax" repo-stats-size-only &&
+  grep -v "RepoPath" repo-stats-size-only &&
+  grep -v "NumObjects" repo-stats-size-only &&
+  grep -v "Version" repo-stats-size-only
 '
 
 test_expect_success "'ipfs repo version' succeeds" '

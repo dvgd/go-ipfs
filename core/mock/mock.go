@@ -2,22 +2,26 @@ package coremock
 
 import (
 	"context"
-	"net"
+	"fmt"
+	"io/ioutil"
 
-	commands "github.com/ipfs/go-ipfs/commands"
-	core "github.com/ipfs/go-ipfs/core"
+	libp2p2 "github.com/ipfs/go-ipfs/core/node/libp2p"
+
+	"github.com/ipfs/go-ipfs/commands"
+	"github.com/ipfs/go-ipfs/core"
 	"github.com/ipfs/go-ipfs/repo"
-	config "github.com/ipfs/go-ipfs/repo/config"
-	ds2 "github.com/ipfs/go-ipfs/thirdparty/datastore2"
-	testutil "gx/ipfs/QmVvkK7s5imCiq3JVbL3pGfnhcCnf3LrFJPF4GE2sAoGZf/go-testutil"
 
-	mocknet "gx/ipfs/QmNh1kGFFdsPu79KNSaL4NUKUPb4Eiz4KHdMtFY6664RDp/go-libp2p/p2p/net/mock"
-	host "gx/ipfs/QmNmJZL7FQySMtE2BQuLMuZg2EB2CLEunJJUSVSc9YnnbV/go-libp2p-host"
-	pstore "gx/ipfs/QmXauCuJzmzapetmC6W4TuDJLL1yFFrVzSHoWv8YdbmnxH/go-libp2p-peerstore"
-	smux "gx/ipfs/QmY9JXR3FupnYAYJWK9aMr9bCpqWKcToQ1tz8DVGTrHpHw/go-stream-muxer"
-	ipnet "gx/ipfs/QmZPrWxuM8GHr4cGKbyF5CCT11sFUP9hgqpeUHALvx2nUr/go-libp2p-interface-pnet"
-	peer "gx/ipfs/QmZoWKhxUmZ2seW4BzX6fJkNR8hh9PsGModr7q171yq2SS/go-libp2p-peer"
-	metrics "gx/ipfs/QmdeBtQGXjSt7cb97nx9JyLHHv5va2LyEAue7Q5tDFzpLy/go-libp2p-metrics"
+	"github.com/ipfs/go-datastore"
+	syncds "github.com/ipfs/go-datastore/sync"
+	config "github.com/ipfs/go-ipfs-config"
+
+	"github.com/libp2p/go-libp2p"
+	host "github.com/libp2p/go-libp2p-core/host"
+	peer "github.com/libp2p/go-libp2p-core/peer"
+	pstore "github.com/libp2p/go-libp2p-core/peerstore"
+	testutil "github.com/libp2p/go-libp2p-testing/net"
+
+	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 )
 
 // NewMockNode constructs an IpfsNode for use in tests.
@@ -31,8 +35,8 @@ func NewMockNode() (*core.IpfsNode, error) {
 	})
 }
 
-func MockHostOption(mn mocknet.Mocknet) core.HostOption {
-	return func(ctx context.Context, id peer.ID, ps pstore.Peerstore, bwr metrics.Reporter, fs []*net.IPNet, _ smux.Transport, _ ipnet.Protector, _ *core.ConstructPeerHostOpts) (host.Host, error) {
+func MockHostOption(mn mocknet.Mocknet) libp2p2.HostOption {
+	return func(ctx context.Context, id peer.ID, ps pstore.Peerstore, _ ...libp2p.Option) (host.Host, error) {
 		return mn.AddPeerWithPeerstore(id, ps)
 	}
 }
@@ -52,7 +56,7 @@ func MockCmdsCtx() (commands.Context, error) {
 	}
 
 	r := &repo.Mock{
-		D: ds2.ThreadSafeCloserMapDatastore(),
+		D: syncds.MutexWrap(datastore.NewMapDatastore()),
 		C: conf,
 	}
 
@@ -64,7 +68,6 @@ func MockCmdsCtx() (commands.Context, error) {
 	}
 
 	return commands.Context{
-		Online:     true,
 		ConfigRoot: "/tmp/.mockipfsconfig",
 		LoadConfig: func(path string) (*config.Config, error) {
 			return &conf, nil
@@ -73,4 +76,26 @@ func MockCmdsCtx() (commands.Context, error) {
 			return node, nil
 		},
 	}, nil
+}
+
+func MockPublicNode(ctx context.Context, mn mocknet.Mocknet) (*core.IpfsNode, error) {
+	ds := syncds.MutexWrap(datastore.NewMapDatastore())
+	cfg, err := config.Init(ioutil.Discard, 2048)
+	if err != nil {
+		return nil, err
+	}
+	count := len(mn.Peers())
+	cfg.Addresses.Swarm = []string{
+		fmt.Sprintf("/ip4/18.0.%d.%d/tcp/4001", count>>16, count&0xFF),
+	}
+	cfg.Datastore = config.Datastore{}
+	return core.NewNode(ctx, &core.BuildCfg{
+		Online:  true,
+		Routing: libp2p2.DHTServerOption,
+		Repo: &repo.Mock{
+			C: *cfg,
+			D: ds,
+		},
+		Host: MockHostOption(mn),
+	})
 }

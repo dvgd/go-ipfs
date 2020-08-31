@@ -26,6 +26,7 @@ fi
 # it's too late to pass in --verbose, and --verbose is harder
 # to pass through in some cases.
 test "$TEST_VERBOSE" = 1 && verbose=t
+test "$TEST_IMMEDIATE" = 1 && immediate=t
 # source the common hashes first.
 . lib/test-lib-hashes.sh
 
@@ -40,6 +41,47 @@ SHARNESS_LIB="lib/sharness/sharness.sh"
 
 # Please put go-ipfs specific shell functions below
 
+###
+# BEGIN Check for pre-existing daemon being stuck
+###
+wait_prev_cleanup_tick_secs=1
+wait_prev_cleanup_max_secs=5
+cur_test_pwd="$(pwd)"
+
+while true ; do
+  echo -n > stuck_cwd_list
+
+  lsof -c ipfs -Ffn 2>/dev/null | grep -A1 '^fcwd$' | grep '^n' | cut -b 2- | while read -r pwd_of_stuck ; do
+    case "$pwd_of_stuck" in
+      "$cur_test_pwd"*)
+        echo "$pwd_of_stuck" >> stuck_cwd_list
+        ;;
+      *)
+        ;;
+    esac
+  done
+
+  test -s stuck_cwd_list || break
+
+  test "$wait_prev_cleanup_max_secs" -le 0 && break
+
+  echo "Daemons still running, waiting for ${wait_prev_cleanup_max_secs}s"
+  sleep $wait_prev_cleanup_tick_secs
+
+  wait_prev_cleanup_max_secs="$(( $wait_prev_cleanup_max_secs - $wait_prev_cleanup_tick_secs ))"
+done
+
+if test -s stuck_cwd_list ; then
+  test_expect_success "ipfs daemon (s)seems to be running with CWDs of
+$(cat stuck_cwd_list)
+Almost certainly a leftover from a prior test, ABORTING" 'false'
+
+  test_done
+fi
+###
+# END Check for pre-existing daemon being stuck
+###
+
 # Make sure the ipfs path is set, also set in test_init_ipfs but that
 # is not always used.
 export IPFS_PATH="$(pwd)/.ipfs"
@@ -51,8 +93,12 @@ TEST_OS="$(uname -s | tr '[a-z]' '[A-Z]')"
 # grab + output options
 test "$TEST_NO_FUSE" != 1 && test_set_prereq FUSE
 test "$TEST_EXPENSIVE" = 1 && test_set_prereq EXPENSIVE
-test "$TEST_NO_DOCKER" != 1 && type docker >/dev/null 2>&1 && test_set_prereq DOCKER
+test "$TEST_NO_DOCKER" != 1 && type docker >/dev/null 2>&1 && groups | egrep "\bdocker\b" && test_set_prereq DOCKER
 test "$TEST_NO_PLUGIN" != 1 && test "$TEST_OS" = "LINUX" && test_set_prereq PLUGIN
+
+# this may not be available, skip a few dependent tests
+type socat >/dev/null 2>&1 && test_set_prereq SOCAT
+
 
 # Set a prereq as error messages are often different on Windows/Cygwin
 expr "$TEST_OS" : "CYGWIN_NT" >/dev/null || test_set_prereq STD_ERR_MSG
@@ -147,7 +193,7 @@ test_init_ipfs() {
 
   test_expect_success "ipfs init succeeds" '
     export IPFS_PATH="$(pwd)/.ipfs" &&
-    ipfs init --profile=test -b=1024 > /dev/null
+    ipfs init --profile=test > /dev/null
   '
 
   test_expect_success "prepare config -- mounting" '
@@ -198,8 +244,11 @@ test_set_address_vars() {
   '
 
   if ipfs swarm addrs local >/dev/null 2>&1; then
+    test_expect_success "get swarm addresses" '
+      ipfs swarm addrs local > addrs_out
+    '
+
     test_expect_success "set swarm address vars" '
-    ipfs swarm addrs local > addrs_out &&
       SWARM_MADDR=$(grep "127.0.0.1" addrs_out) &&
       SWARM_PORT=$(port_from_maddr $SWARM_MADDR)
     '
@@ -208,12 +257,13 @@ test_set_address_vars() {
 
 test_launch_ipfs_daemon() {
 
-  args="$@"
+  args=("$@")
 
   test "$TEST_ULIMIT_PRESET" != 1 && ulimit -n 2048
 
   test_expect_success "'ipfs daemon' succeeds" '
-    ipfs daemon $args >actual_daemon 2>daemon_err &
+    ipfs daemon "${args[@]}" >actual_daemon 2>daemon_err &
+    IPFS_PID=$!
   '
 
   # wait for api file to show up
@@ -225,8 +275,7 @@ test_launch_ipfs_daemon() {
 
   # we say the daemon is ready when the API server is ready.
   test_expect_success "'ipfs daemon' is ready" '
-    IPFS_PID=$! &&
-    pollEndpoint -ep=/version -host=$API_MADDR -v -tout=1s -tries=60 2>poll_apierr > poll_apiout ||
+    pollEndpoint -host=$API_MADDR -v -tout=1s -tries=60 2>poll_apierr > poll_apiout ||
     test_fsh cat actual_daemon || test_fsh cat daemon_err || test_fsh cat poll_apierr || test_fsh cat poll_apiout
   '
 }
@@ -394,10 +443,46 @@ file_size() {
     $_STAT "$1"
 }
 
+# len 46: 2048-bit RSA keys, b58mh-encoded
+# len 52: ED25519 keys, b58mh-encoded
+# len 56: 2048-bit RSA keys, base36-encoded
+# len 62: ED25519 keys, base36-encoded
 test_check_peerid() {
   peeridlen=$(echo "$1" | tr -dC "[:alnum:]" | wc -c | tr -d " ") &&
-  test "$peeridlen" = "46" || {
+  test "$peeridlen" = "46" -o "$peeridlen" = "52" -o "$peeridlen" = "56" -o "$peeridlen" = "62" || {
     echo "Bad peerid '$1' with len '$peeridlen'"
+    return 1
+  }
+}
+
+test_check_rsa2048_b58mh_peerid() {
+  peeridlen=$(echo "$1" | tr -dC "[:alnum:]" | wc -c | tr -d " ") &&
+  test "$peeridlen" = "46" || {
+    echo "Bad RSA2048 B58MH peerid '$1' with len '$peeridlen'"
+    return 1
+  }
+}
+
+test_check_ed25519_b58mh_peerid() {
+  peeridlen=$(echo "$1" | tr -dC "[:alnum:]" | wc -c | tr -d " ") &&
+  test "$peeridlen" = "52" || {
+    echo "Bad ED25519 B58MH peerid '$1' with len '$peeridlen'"
+    return 1
+  }
+}
+
+test_check_rsa2048_base36_peerid() {
+  peeridlen=$(echo "$1" | tr -dC "[:alnum:]" | wc -c | tr -d " ") &&
+  test "$peeridlen" = "56" || {
+    echo "Bad RSA2048 B36CID peerid '$1' with len '$peeridlen'"
+    return 1
+  }
+}
+
+test_check_ed25519_base36_peerid() {
+  peeridlen=$(echo "$1" | tr -dC "[:alnum:]" | wc -c | tr -d " ") &&
+  test "$peeridlen" = "62" || {
+    echo "Bad ED25519 B36CID peerid '$1' with len '$peeridlen'"
     return 1
   }
 }
@@ -408,4 +493,25 @@ convert_tcp_maddr() {
 
 port_from_maddr() {
   echo $1 | awk -F'/' '{ print $NF }'
+}
+
+findprovs_empty() {
+  test_expect_success 'findprovs '$1' succeeds' '
+    ipfsi 1 dht findprovs -n 1 '$1' > findprovsOut
+  '
+
+  test_expect_success "findprovs $1 output is empty" '
+    test_must_be_empty findprovsOut
+  '
+}
+
+findprovs_expect() {
+  test_expect_success 'findprovs '$1' succeeds' '
+    ipfsi 1 dht findprovs -n 1 '$1' > findprovsOut &&
+    echo '$2' > expected
+  '
+
+  test_expect_success "findprovs $1 output looks good" '
+    test_cmp findprovsOut expected
+  '
 }

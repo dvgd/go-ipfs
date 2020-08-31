@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright (c) 2015 Jeromy Johnson
 # MIT Licensed; see the LICENSE file in this repository.
@@ -44,6 +44,15 @@ test_expect_success "files look right" '
   diff foo/bar/baz output/foo/bar/baz &&
   [ -L output/foo/bar/link ] &&
   [ -x foo/script ]
+'
+
+test_expect_success "'ipfs tar add --cid-base=base32' succeeds" '
+  ipfs tar add --cid-base=base32 files.tar > actual
+'
+
+test_expect_success "'ipfs tar add --cid-base=base32' has correct hash" '
+  ipfs cid base32 $TAR_HASH > expected &&
+  test_cmp expected actual
 '
 
 test_done

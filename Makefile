@@ -1,10 +1,6 @@
-# General tools
+all:
+	@gmake $@
+.PHONY: all
 
-SHELL=PATH='$(PATH)' /bin/sh
-
-PROTOC = protoc --gogo_out=. --proto_path=.:/usr/local/opt/protobuf/include:$(dir $@) $<
-
-# enable second expansion
-.SECONDEXPANSION:
-
-include Rules.mk
+.DEFAULT:
+	@gmake $@

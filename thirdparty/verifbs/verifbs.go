@@ -1,11 +1,10 @@
 package verifbs
 
 import (
-	"github.com/ipfs/go-ipfs/thirdparty/verifcid"
-
-	bstore "gx/ipfs/QmTVDM4LCSUMFNQzbDLL9zQwp8usE6QHymFdh3h8vL9v6b/go-ipfs-blockstore"
-	cid "gx/ipfs/QmcZfnkapfECQGcLZaf9B79NRg7cRa9EnZh4LSbkCzwNvY/go-cid"
-	blocks "gx/ipfs/Qmej7nf81hi2x2tvjRBF3mcp74sQyuDH4VMYDGd1YtXjb2/go-block-format"
+	blocks "github.com/ipfs/go-block-format"
+	cid "github.com/ipfs/go-cid"
+	bstore "github.com/ipfs/go-ipfs-blockstore"
+	"github.com/ipfs/go-verifcid"
 )
 
 type VerifBSGC struct {
@@ -28,7 +27,7 @@ func (bs *VerifBSGC) PutMany(blks []blocks.Block) error {
 	return bs.GCBlockstore.PutMany(blks)
 }
 
-func (bs *VerifBSGC) Get(c *cid.Cid) (blocks.Block, error) {
+func (bs *VerifBSGC) Get(c cid.Cid) (blocks.Block, error) {
 	if err := verifcid.ValidateCid(c); err != nil {
 		return nil, err
 	}
@@ -55,7 +54,7 @@ func (bs *VerifBS) PutMany(blks []blocks.Block) error {
 	return bs.Blockstore.PutMany(blks)
 }
 
-func (bs *VerifBS) Get(c *cid.Cid) (blocks.Block, error) {
+func (bs *VerifBS) Get(c cid.Cid) (blocks.Block, error) {
 	if err := verifcid.ValidateCid(c); err != nil {
 		return nil, err
 	}

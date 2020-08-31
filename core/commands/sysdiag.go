@@ -5,61 +5,55 @@ import (
 	"path"
 	"runtime"
 
-	cmds "github.com/ipfs/go-ipfs/commands"
-	config "github.com/ipfs/go-ipfs/repo/config"
+	version "github.com/ipfs/go-ipfs"
+	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
 
-	manet "gx/ipfs/QmRK2LxanhK2gZq6k6R7vk5ZoYZk8ULSSTB7FzDsMUX6CB/go-multiaddr-net"
-	sysi "gx/ipfs/QmZRjKbHa6DenStpQJFiaPcEwkZqrx7TH6xTf342LDU3qM/go-sysinfo"
-	"gx/ipfs/QmceUdzxkimdYsgtX733uNgzf1DLHyBKN6ehGSp85ayppM/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	manet "github.com/multiformats/go-multiaddr/net"
+	sysi "github.com/whyrusleeping/go-sysinfo"
 )
 
 var sysDiagCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
+	Helptext: cmds.HelpText{
 		Tagline: "Print system diagnostic information.",
 		ShortDescription: `
 Prints out information about your computer to aid in easier debugging.
 `,
 	},
-	Run: func(req cmds.Request, res cmds.Response) {
+	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
 		info := make(map[string]interface{})
 		err := runtimeInfo(info)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
 		err = envVarInfo(info)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
 		err = diskSpaceInfo(info)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
 		err = memInfo(info)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
-		node, err := req.InvocContext().GetNode()
+		nd, err := cmdenv.GetNode(env)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		err = netInfo(node.OnlineMode(), info)
+		err = netInfo(nd.IsOnline, info)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		info["ipfs_version"] = config.CurrentVersionNumber
-		info["ipfs_commit"] = config.CurrentCommit
-		res.SetOutput(info)
+		info["ipfs_version"] = version.CurrentVersionNumber
+		info["ipfs_commit"] = version.CurrentCommit
+		return cmds.EmitOnce(res, info)
 	},
 }
 

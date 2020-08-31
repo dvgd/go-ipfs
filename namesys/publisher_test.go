@@ -3,19 +3,19 @@ package namesys
 import (
 	"context"
 	"crypto/rand"
+	"github.com/ipfs/go-path"
 	"testing"
 	"time"
 
-	path "github.com/ipfs/go-ipfs/path"
-
-	ds "gx/ipfs/QmPpegoMqhAEqjncrzArm7KVWAkCm78rqL2DPuNjhPrshg/go-datastore"
-	dssync "gx/ipfs/QmPpegoMqhAEqjncrzArm7KVWAkCm78rqL2DPuNjhPrshg/go-datastore/sync"
-	testutil "gx/ipfs/QmVvkK7s5imCiq3JVbL3pGfnhcCnf3LrFJPF4GE2sAoGZf/go-testutil"
-	ma "gx/ipfs/QmWWQ2Txc2c6tqjsBpzg5Ar652cHPGNsQQp2SejkNmkUMb/go-multiaddr"
-	mockrouting "gx/ipfs/QmZRcGYvxdauCd7hHnMYLYqcZRaDjv24c7eUNyJojAcdBb/go-ipfs-routing/mock"
-	peer "gx/ipfs/QmZoWKhxUmZ2seW4BzX6fJkNR8hh9PsGModr7q171yq2SS/go-libp2p-peer"
-	ci "gx/ipfs/QmaPbCnUMBohSGo3KnxEa2bHqyJVVeEEcwtqJAYxerieBo/go-libp2p-crypto"
-	dshelp "gx/ipfs/QmdQTPWduSeyveSxeCAte33M592isSW5Z979g81aJphrgn/go-ipfs-ds-help"
+	ds "github.com/ipfs/go-datastore"
+	dssync "github.com/ipfs/go-datastore/sync"
+	dshelp "github.com/ipfs/go-ipfs-ds-help"
+	mockrouting "github.com/ipfs/go-ipfs-routing/mock"
+	ipns "github.com/ipfs/go-ipns"
+	ci "github.com/libp2p/go-libp2p-core/crypto"
+	peer "github.com/libp2p/go-libp2p-core/peer"
+	testutil "github.com/libp2p/go-libp2p-testing/net"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 type identity struct {
@@ -49,20 +49,13 @@ func testNamekeyPublisher(t *testing.T, keyType int, expectedErr error, expected
 	}
 
 	// ID
-	var id peer.ID
-	switch keyType {
-	case ci.Ed25519:
-		id, err = peer.IDFromEd25519PublicKey(pubKey)
-	default:
-		id, err = peer.IDFromPublicKey(pubKey)
-	}
-
+	id, err := peer.IDFromPublicKey(pubKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Value
-	value := path.Path("ipfs/TESTING")
+	value := []byte("ipfs/TESTING")
 
 	// Seqnum
 	seqnum := uint64(0)
@@ -82,13 +75,18 @@ func testNamekeyPublisher(t *testing.T, keyType int, expectedErr error, expected
 	serv := mockrouting.NewServer()
 	r := serv.ClientWithDatastore(context.Background(), &identity{p}, dstore)
 
-	err = PutRecordToRouting(ctx, privKey, value, seqnum, eol, r, id)
+	entry, err := ipns.Create(privKey, value, seqnum, eol)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = PutRecordToRouting(ctx, r, pubKey, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Check for namekey existence in value store
-	namekey, _ := IpnsKeysForID(id)
+	namekey := PkKeyForID(id)
 	_, err = r.GetValue(ctx, namekey)
 	if err != expectedErr {
 		t.Fatal(err)
@@ -112,4 +110,46 @@ func TestRSAPublisher(t *testing.T) {
 
 func TestEd22519Publisher(t *testing.T) {
 	testNamekeyPublisher(t, ci.Ed25519, ds.ErrNotFound, false)
+}
+
+func TestAsyncDS(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rt := mockrouting.NewServer().Client(testutil.RandIdentityOrFatal(t))
+	ds := &checkSyncDS{
+		Datastore: ds.NewMapDatastore(),
+		syncKeys:  make(map[ds.Key]struct{}),
+	}
+	publisher := NewIpnsPublisher(rt, ds)
+
+	ipnsFakeID := testutil.RandIdentityOrFatal(t)
+	ipnsVal, err := path.ParsePath("/ipns/foo.bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := publisher.Publish(ctx, ipnsFakeID.PrivateKey(), ipnsVal); err != nil {
+		t.Fatal(err)
+	}
+
+	ipnsKey := IpnsDsKey(ipnsFakeID.ID())
+
+	for k := range ds.syncKeys {
+		if k.IsAncestorOf(ipnsKey) || k.Equal(ipnsKey) {
+			return
+		}
+	}
+
+	t.Fatal("ipns key not synced")
+}
+
+type checkSyncDS struct {
+	ds.Datastore
+	syncKeys map[ds.Key]struct{}
+}
+
+func (d *checkSyncDS) Sync(prefix ds.Key) error {
+	d.syncKeys[prefix] = struct{}{}
+	return d.Datastore.Sync(prefix)
 }

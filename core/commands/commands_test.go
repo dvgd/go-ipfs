@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	cmds "gx/ipfs/QmabLouZTZwhfALuBcssPvkzhbYGMb4394huT7HY4LQ6d3/go-ipfs-cmds"
+	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 func collectPaths(prefix string, cmd *cmds.Command, out map[string]struct{}) {
@@ -25,6 +25,7 @@ func TestROCommands(t *testing.T) {
 		"/dag",
 		"/dag/get",
 		"/dag/resolve",
+		"/dag/stat",
 		"/dns",
 		"/get",
 		"/ls",
@@ -73,7 +74,6 @@ func TestCommands(t *testing.T) {
 		"/bitswap/ledger",
 		"/bitswap/reprovide",
 		"/bitswap/stat",
-		"/bitswap/unwant",
 		"/bitswap/wantlist",
 		"/block",
 		"/block/get",
@@ -96,8 +96,11 @@ func TestCommands(t *testing.T) {
 		"/config/profile/apply",
 		"/dag",
 		"/dag/get",
+		"/dag/export",
 		"/dag/put",
+		"/dag/import",
 		"/dag/resolve",
+		"/dag/stat",
 		"/dht",
 		"/dht/findpeer",
 		"/dht/findprovs",
@@ -132,9 +135,12 @@ func TestCommands(t *testing.T) {
 		"/id",
 		"/key",
 		"/key/gen",
+		"/key/export",
+		"/key/import",
 		"/key/list",
 		"/key/rename",
 		"/key/rm",
+		"/key/rotate",
 		"/log",
 		"/log/level",
 		"/log/ls",
@@ -162,13 +168,12 @@ func TestCommands(t *testing.T) {
 		"/object/put",
 		"/object/stat",
 		"/p2p",
-		"/p2p/listener",
-		"/p2p/listener/close",
-		"/p2p/listener/ls",
-		"/p2p/listener/open",
+		"/p2p/close",
+		"/p2p/forward",
+		"/p2p/listen",
+		"/p2p/ls",
 		"/p2p/stream",
 		"/p2p/stream/close",
-		"/p2p/stream/dial",
 		"/p2p/stream/ls",
 		"/pin",
 		"/pin/add",
@@ -195,6 +200,7 @@ func TestCommands(t *testing.T) {
 		"/stats",
 		"/stats/bitswap",
 		"/stats/bw",
+		"/stats/dht",
 		"/stats/repo",
 		"/swarm",
 		"/swarm/addrs",
@@ -210,7 +216,16 @@ func TestCommands(t *testing.T) {
 		"/tar/add",
 		"/tar/cat",
 		"/update",
+		"/urlstore",
+		"/urlstore/add",
 		"/version",
+		"/version/deps",
+		"/cid",
+		"/cid/format",
+		"/cid/base32",
+		"/cid/codecs",
+		"/cid/bases",
+		"/cid/hashes",
 	}
 
 	cmdSet := make(map[string]struct{})

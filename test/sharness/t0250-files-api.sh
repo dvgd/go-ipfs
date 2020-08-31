@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright (c) 2015 Jeromy Johnson
 # MIT Licensed; see the LICENSE file in this repository.
@@ -56,17 +56,27 @@ test_sharding() {
 
   test_expect_success "can make 100 files in a directory $EXTRA" '
     printf "" > list_exp_raw
-    for i in `seq 100`
+    for i in `seq 100 -1 1`
     do
       echo $i | ipfs files write --create /foo/file$i || return 1
       echo file$i >> list_exp_raw
     done
   '
+  # Create the files in reverse (unsorted) order (`seq 100 -1 1`)
+  # to check the sort in the `ipfs files ls` command. `ProtoNode`
+  # links are always sorted at the DAG layer so the sorting feature
+  # is tested with sharded directories.
 
-  test_expect_success "listing works $EXTRA" '
-    ipfs files ls /foo |sort > list_out &&
+  test_expect_success "sorted listing works $EXTRA" '
+    ipfs files ls /foo > list_out &&
     sort list_exp_raw > list_exp &&
     test_cmp list_exp list_out
+  '
+
+  test_expect_success "unsorted listing works $EXTRA" '
+    ipfs files ls -U /foo > list_out &&
+    sort list_exp_raw > sort_list_not_exp &&
+    ! test_cmp sort_list_not_exp list_out
   '
 
   test_expect_success "can read a file from sharded directory $EXTRA" '
@@ -186,6 +196,30 @@ test_files_api() {
     test_cmp ls_l_expected ls_l_actual
   '
 
+  test_expect_success "file has correct hash and size listed with -l" '
+    echo "file1	$FILE1	4" > ls_l_expected &&
+    ipfs files ls -l /cats/file1 > ls_l_actual &&
+    test_cmp ls_l_expected ls_l_actual
+  '
+
+  test_expect_success "file has correct hash and size listed with --long" '
+    echo "file1	$FILE1	4" > ls_l_expected &&
+    ipfs files ls --long /cats/file1 > ls_l_actual &&
+    test_cmp ls_l_expected ls_l_actual
+  '
+
+  test_expect_success "file has correct hash and size listed with -l --cid-base=base32" '
+    echo "file1	`cid-fmt -v 1 -b base32 %s $FILE1`	4" > ls_l_expected &&
+    ipfs files ls --cid-base=base32 -l /cats/file1 > ls_l_actual &&
+    test_cmp ls_l_expected ls_l_actual
+  '
+
+  test_expect_success "file shows up with the correct name" '
+    echo "file1" > ls_l_expected &&
+    ipfs files ls /cats/file1 > ls_l_actual &&
+    test_cmp ls_l_expected ls_l_actual
+  '
+
   test_expect_success "can stat file $EXTRA" '
     ipfs files stat /cats/file1 > file1stat_orig
   '
@@ -193,6 +227,19 @@ test_files_api() {
   test_expect_success "stat output looks good" '
     grep -v CumulativeSize: file1stat_orig > file1stat_actual &&
     echo "$FILE1" > file1stat_expect &&
+    echo "Size: 4" >> file1stat_expect &&
+    echo "ChildBlocks: 0" >> file1stat_expect &&
+    echo "Type: file" >> file1stat_expect &&
+    test_cmp file1stat_expect file1stat_actual
+  '
+
+  test_expect_success "can stat file with --cid-base=base32 $EXTRA" '
+    ipfs files stat --cid-base=base32 /cats/file1 > file1stat_orig
+  '
+
+  test_expect_success "stat output looks good with --cid-base=base32" '
+    grep -v CumulativeSize: file1stat_orig > file1stat_actual &&
+    echo `cid-fmt -v 1 -b base32 %s $FILE1` > file1stat_expect &&
     echo "Size: 4" >> file1stat_expect &&
     echo "ChildBlocks: 0" >> file1stat_expect &&
     echo "Type: file" >> file1stat_expect &&
@@ -236,6 +283,13 @@ test_files_api() {
     verify_dir_contents /cats/this/is a &&
     verify_dir_contents /cats/this/is/a dir &&
     verify_dir_contents /cats/this/is/a/dir
+  '
+
+  test_expect_success "dir has correct name" '
+    DIR_HASH=$(ipfs files stat /cats/this --hash) &&
+    echo "this/	$DIR_HASH	0" > ls_dir_expected &&
+    ipfs files ls -l /cats | grep this/ > ls_dir_actual &&
+    test_cmp ls_dir_expected ls_dir_actual
   '
 
   test_expect_success "can copy file into new dir $EXTRA" '
@@ -388,10 +442,10 @@ test_files_api() {
   test_expect_success "file hash correct $EXTRA" '
     echo $FILE_HASH > filehash_expected &&
     ipfs files stat --hash /cats/ipfs > filehash &&
-    test_cmp filehash_expected filehash 
+    test_cmp filehash_expected filehash
   '
 
-  test_expect_success "cant write to negative offset $EXTRA" '
+  test_expect_success "can't write to negative offset $EXTRA" '
     test_expect_code 1 ipfs files write $ARGS $RAW_LEAVES --offset -1 /cats/ipfs < output
   '
 
@@ -474,6 +528,14 @@ test_files_api() {
   # test mv
   test_expect_success "can mv dir $EXTRA" '
     ipfs files mv /cats/this/is /cats/
+  '
+
+  test_expect_success "can mv dir and dest dir is / $EXTRA" '
+    ipfs files mv /cats/is /
+  '
+
+  test_expect_success "can mv dir and dest dir path has no trailing slash $EXTRA" '
+    ipfs files mv /is /cats
   '
 
   test_expect_success "mv worked $EXTRA" '
@@ -575,9 +637,29 @@ test_files_api() {
     ipfs files ls /adir | grep foobar
   '
 
+  test_expect_success "should fail to write file and create intermediate directories with no --parents flag set $EXTRA" '
+    echo "ipfs rocks" | test_must_fail ipfs files write --create /parents/foo/ipfs.txt
+  '
+
+  test_expect_success "can write file and create intermediate directories $EXTRA" '
+    echo "ipfs rocks" | ipfs files write --create --parents /parents/foo/bar/baz/ipfs.txt &&
+    ipfs files stat "/parents/foo/bar/baz/ipfs.txt" | grep -q "^Type: file"
+  '
+
+  test_expect_success "can write file and create intermediate directories with short flags $EXTRA" '
+    echo "ipfs rocks" | ipfs files write -e -p /parents/foo/bar/baz/qux/quux/garply/ipfs.txt &&
+    ipfs files stat "/parents/foo/bar/baz/qux/quux/garply/ipfs.txt" | grep -q "^Type: file"
+  '
+
+  test_expect_success "can write another file in the same directory with -e -p $EXTRA" '
+    echo "ipfs rocks" | ipfs files write -e -p /parents/foo/bar/baz/qux/quux/garply/ipfs2.txt &&
+    ipfs files stat "/parents/foo/bar/baz/qux/quux/garply/ipfs2.txt" | grep -q "^Type: file"
+  '
+
   test_expect_success "clean up $EXTRA" '
     ipfs files rm -r /foobar &&
-    ipfs files rm -r /adir
+    ipfs files rm -r /adir &&
+    ipfs files rm -r /parents
   '
 
   test_expect_success "root mfs entry is empty $EXTRA" '
@@ -586,6 +668,28 @@ test_files_api() {
 
   test_expect_success "repo gc $EXTRA" '
     ipfs repo gc
+  '
+
+  # test rm
+
+  test_expect_success "remove file forcibly" '
+    echo "hello world" | ipfs files write --create /forcibly &&
+    ipfs files rm --force /forcibly &&
+    verify_dir_contents /
+  '
+
+  test_expect_success "remove directory forcibly" '
+    ipfs files mkdir /forcibly-dir &&
+    ipfs files rm --force /forcibly-dir &&
+    verify_dir_contents /
+  '
+
+  test_expect_success "remove nonexistant path forcibly" '
+    ipfs files rm --force /nonexistant
+  '
+
+  test_expect_success "remove deeply nonexistant path forcibly" '
+    ipfs files rm --force /deeply/nonexistant
   '
 }
 
@@ -601,7 +705,7 @@ tests_for_files_api() {
   ROOT_HASH=QmcwKfTMCT7AaeiD92hWjnZn9b6eh9NxnhfSzN5x2vnDpt
   CATS_HASH=Qma88m8ErTGkZHbBWGqy1C7VmEmX8wwNDWNpGyCaNmEgwC
   FILE_HASH=QmQdQt9qooenjeaNhiKHF3hBvmNteB4MQBtgu3jxgf9c7i
-  TRUNC_HASH=QmdaQZbLwK5ykweGdCVovNnvBom7QhikovDUVqTPHQG4L8
+  TRUNC_HASH=QmPVnT9gocPbqzN4G6SMp8vAPyzcjDbUJrNdKgzQquuDg4
   test_files_api "($EXTRA)"
 
   test_expect_success "can create some files for testing with raw-leaves ($EXTRA)" '
@@ -617,38 +721,38 @@ tests_for_files_api() {
   ROOT_HASH=QmW3dMSU6VNd1mEdpk9S3ZYRuR1YwwoXjGaZhkyK6ru9YU
   CATS_HASH=QmPqWDEg7NoWRX8Y4vvYjZtmdg5umbfsTQ9zwNr12JoLmt
   FILE_HASH=QmRCgHeoKxCqK2Es6M6nPUDVWz19yNQPnsXGsXeuTkSKpN
-  TRUNC_HASH=QmRFJEKWF5A5FyFYZgNhusLw2UziW9zBKYr4huyHjzcB6o
+  TRUNC_HASH=QmckstrVxJuecVD1FHUiURJiU9aPURZWJieeBVHJPACj8L
   test_files_api "($EXTRA, raw-leaves)" '' --raw-leaves
 
   ROOT_HASH=QmageRWxC7wWjPv5p36NeAgBAiFdBHaNfxAehBSwzNech2
-  CATS_HASH=zdj7WkEzPLNAr5TYJSQC8CFcBjLvWFfGdx6kaBrJXnBguwWeX
-  FILE_HASH=zdj7WYHvf5sBRgSBjYnq64QFr449CCbgupXfBvoYL3aHC1DzJ
-  TRUNC_HASH=zdj7WYLYbka6Ydg8gZUJRLKnFBVehCADhQKBsFbNiMxZSB5Gj
+  CATS_HASH=bafybeig4cpvfu2qwwo3u4ffazhqdhyynfhnxqkzvbhrdbamauthf5mfpuq
+  FILE_HASH=bafybeibkrazpbejqh3qun7xfnsl7yofl74o4jwhxebpmtrcpavebokuqtm
+  TRUNC_HASH=bafybeigwhb3q36yrm37jv5fo2ap6r6eyohckqrxmlejrenex4xlnuxiy3e
   if [ "$EXTRA" = "offline" ]; then
     test_files_api "($EXTRA, cidv1)" --cid-version=1
   fi
 
   test_expect_success "can update root hash to cidv1" '
     ipfs files chcid --cid-version=1 / &&
-    echo zdj7WbTaiJT1fgatdet9Ei9iDB5hdCxkbVyhyh8YTUnXMiwYi > hash_expect &&
+    echo bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354 > hash_expect &&
     ipfs files stat --hash / > hash_actual &&
     test_cmp hash_expect hash_actual
   '
 
-  ROOT_HASH=zdj7Whmtnx23bR7c7E1Yn3zWYWjnvT4tpzWYGaBMyqcopDWrx
+  ROOT_HASH=bafybeifxnoetaa2jetwmxubv3gqiyaknnujwkkkhdeua63kulm63dcr5wu
     test_files_api "($EXTRA, cidv1 root)"
 
   if [ "$EXTRA" = "offline" ]; then
     test_expect_success "can update root hash to blake2b-256" '
     ipfs files chcid --hash=blake2b-256 / &&
-      echo zDMZof1kvswQMT8txrmnb3JGBuna6qXCTry6hSifrkZEd6VmHbBm > hash_expect &&
+      echo bafykbzacebugfutjir6qie7apo5shpry32ruwfi762uytd5g3u2gk7tpscndq > hash_expect &&
       ipfs files stat --hash / > hash_actual &&
       test_cmp hash_expect hash_actual
     '
-    ROOT_HASH=zDMZof1kxEsAwSgCZsGQRVcHCMtHLjkUQoiZUbZ87erpPQJGUeW8
-    CATS_HASH=zDMZof1kuAhr3zBkxq48V7o9HJZCTVyu1Wd9wnZtVcPJLW8xnGft
-    FILE_HASH=zDMZof1kxbB9CvxgRioBzESbGnZUxtSCsZ18H1EUkxDdWt1DYEkK
-    TRUNC_HASH=zDMZof1kxXqKdVsVo231qVdN3hCTF5a34UuQZpzmm5K7CbRJ4u2S
+    ROOT_HASH=bafykbzaceb6jv27itwfun6wsrbaxahpqthh5be2bllsjtb3qpmly3vji4mlfk
+    CATS_HASH=bafykbzacebhpn7rtcjjc5oa4zgzivhs7a6e2tq4uk4px42bubnmhpndhqtjig
+    FILE_HASH=bafykbzaceca45w2i3o3q3ctqsezdv5koakz7sxsw37ygqjg4w54m2bshzevxy
+    TRUNC_HASH=bafykbzaceadeu7onzmlq7v33ytjpmo37rsqk2q6mzeqf5at55j32zxbcdbwig
     test_files_api "($EXTRA, blake2b-256 root)"
   fi
 
@@ -679,7 +783,7 @@ test_launch_ipfs_daemon --offline
 SHARD_HASH=QmPkwLJTYZRGPJ8Lazr9qPdrLmswPtUjaDbEpmR9jEh1se
 test_sharding "(cidv0)"
 
-SHARD_HASH=zdj7WZXr6vG2Ne7ZLHGEKrGyF3pHBfAViEnmH9CoyvjrFQM8E
+SHARD_HASH=bafybeib46tpawg2d2hhlmmn2jvgio33wqkhlehxrem7wbfvqqikure37rm
 test_sharding "(cidv1 root)" "--cid-version=1"
 
 test_kill_ipfs_daemon

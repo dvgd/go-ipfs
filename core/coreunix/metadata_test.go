@@ -3,24 +3,25 @@ package coreunix
 import (
 	"bytes"
 	"context"
+	"io"
 	"io/ioutil"
 	"testing"
 
-	bserv "github.com/ipfs/go-ipfs/blockservice"
+	bserv "github.com/ipfs/go-blockservice"
 	core "github.com/ipfs/go-ipfs/core"
-	offline "github.com/ipfs/go-ipfs/exchange/offline"
-	importer "github.com/ipfs/go-ipfs/importer"
-	merkledag "github.com/ipfs/go-ipfs/merkledag"
-	ft "github.com/ipfs/go-ipfs/unixfs"
-	uio "github.com/ipfs/go-ipfs/unixfs/io"
+	merkledag "github.com/ipfs/go-merkledag"
+	ft "github.com/ipfs/go-unixfs"
+	importer "github.com/ipfs/go-unixfs/importer"
+	uio "github.com/ipfs/go-unixfs/io"
 
-	u "gx/ipfs/QmNiJuT8Ja3hMVpBHXv3Q6dwmperaQ6JjLtpMQgMCD7xvx/go-ipfs-util"
-	ds "gx/ipfs/QmPpegoMqhAEqjncrzArm7KVWAkCm78rqL2DPuNjhPrshg/go-datastore"
-	dssync "gx/ipfs/QmPpegoMqhAEqjncrzArm7KVWAkCm78rqL2DPuNjhPrshg/go-datastore/sync"
-	bstore "gx/ipfs/QmTVDM4LCSUMFNQzbDLL9zQwp8usE6QHymFdh3h8vL9v6b/go-ipfs-blockstore"
-	chunker "gx/ipfs/QmWo8jYc19ppG7YoTsrr2kEtLRbARTJho5oNXFTR6B7Peq/go-ipfs-chunker"
-	cid "gx/ipfs/QmcZfnkapfECQGcLZaf9B79NRg7cRa9EnZh4LSbkCzwNvY/go-cid"
-	ipld "gx/ipfs/Qme5bWv7wtjUNGsK2BNGVUFPKiuxWrsqrtvYwCLRw8YFES/go-ipld-format"
+	cid "github.com/ipfs/go-cid"
+	ds "github.com/ipfs/go-datastore"
+	dssync "github.com/ipfs/go-datastore/sync"
+	bstore "github.com/ipfs/go-ipfs-blockstore"
+	chunker "github.com/ipfs/go-ipfs-chunker"
+	offline "github.com/ipfs/go-ipfs-exchange-offline"
+	u "github.com/ipfs/go-ipfs-util"
+	ipld "github.com/ipfs/go-ipld-format"
 )
 
 func getDagserv(t *testing.T) ipld.DAGService {
@@ -35,7 +36,10 @@ func TestMetadata(t *testing.T) {
 	// Make some random node
 	ds := getDagserv(t)
 	data := make([]byte, 1000)
-	u.NewTimeSeededRand().Read(data)
+	_, err := io.ReadFull(u.NewTimeSeededRand(), data)
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := bytes.NewReader(data)
 	nd, err := importer.BuildDagFromReader(ds, chunker.DefaultSplitter(r))
 	if err != nil {

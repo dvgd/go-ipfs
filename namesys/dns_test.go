@@ -3,6 +3,8 @@ package namesys
 import (
 	"fmt"
 	"testing"
+
+	opts "github.com/ipfs/interface-go-ipfs-core/options/namesys"
 )
 
 type mockDNS struct {
@@ -12,7 +14,7 @@ type mockDNS struct {
 func (m *mockDNS) lookupTXT(name string) (txt []string, err error) {
 	txt, ok := m.entries[name]
 	if !ok {
-		return nil, fmt.Errorf("No TXT entry for %s", name)
+		return nil, fmt.Errorf("no TXT entry for %s", name)
 	}
 	return txt, nil
 }
@@ -59,67 +61,73 @@ func TestDnsEntryParsing(t *testing.T) {
 func newMockDNS() *mockDNS {
 	return &mockDNS{
 		entries: map[string][]string{
-			"multihash.example.com": []string{
+			"multihash.example.com.": []string{
 				"dnslink=QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD",
 			},
-			"ipfs.example.com": []string{
+			"ipfs.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD",
 			},
-			"_dnslink.dipfs.example.com": []string{
+			"_dnslink.dipfs.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD",
 			},
-			"dns1.example.com": []string{
+			"dns1.example.com.": []string{
 				"dnslink=/ipns/ipfs.example.com",
 			},
-			"dns2.example.com": []string{
+			"dns2.example.com.": []string{
 				"dnslink=/ipns/dns1.example.com",
 			},
-			"multi.example.com": []string{
+			"multi.example.com.": []string{
 				"some stuff",
 				"dnslink=/ipns/dns1.example.com",
 				"masked dnslink=/ipns/example.invalid",
 			},
-			"equals.example.com": []string{
+			"equals.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/=equals",
 			},
-			"loop1.example.com": []string{
+			"loop1.example.com.": []string{
 				"dnslink=/ipns/loop2.example.com",
 			},
-			"loop2.example.com": []string{
+			"loop2.example.com.": []string{
 				"dnslink=/ipns/loop1.example.com",
 			},
-			"_dnslink.dloop1.example.com": []string{
+			"_dnslink.dloop1.example.com.": []string{
 				"dnslink=/ipns/loop2.example.com",
 			},
-			"_dnslink.dloop2.example.com": []string{
+			"_dnslink.dloop2.example.com.": []string{
 				"dnslink=/ipns/loop1.example.com",
 			},
-			"bad.example.com": []string{
+			"bad.example.com.": []string{
 				"dnslink=",
 			},
-			"withsegment.example.com": []string{
+			"withsegment.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment",
 			},
-			"withrecsegment.example.com": []string{
+			"withrecsegment.example.com.": []string{
 				"dnslink=/ipns/withsegment.example.com/subsub",
 			},
-			"withtrailing.example.com": []string{
+			"withtrailing.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/",
 			},
-			"withtrailingrec.example.com": []string{
+			"withtrailingrec.example.com.": []string{
 				"dnslink=/ipns/withtrailing.example.com/segment/",
 			},
-			"double.example.com": []string{
+			"double.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD",
 			},
-			"_dnslink.double.example.com": []string{
+			"_dnslink.double.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD",
 			},
-			"double.conflict.com": []string{
+			"double.conflict.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD",
 			},
-			"_dnslink.conflict.example.com": []string{
+			"_dnslink.conflict.example.com.": []string{
 				"dnslink=/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjE",
+			},
+			"fqdn.example.com.": []string{
+				"dnslink=/ipfs/QmYvMB9yrsSf7RKBghkfwmHJkzJhW2ZgVwq3LxBXXPasFr",
+			},
+			"www.wealdtech.eth.link.": []string{
+				"dnslink=/ipns/ipfs.example.com",
 			},
 		},
 	}
@@ -128,33 +136,37 @@ func newMockDNS() *mockDNS {
 func TestDNSResolution(t *testing.T) {
 	mock := newMockDNS()
 	r := &DNSResolver{lookupTXT: mock.lookupTXT}
-	testResolution(t, r, "multihash.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
-	testResolution(t, r, "ipfs.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
-	testResolution(t, r, "dipfs.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
-	testResolution(t, r, "dns1.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "multihash.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "ipfs.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "dipfs.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "dns1.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
 	testResolution(t, r, "dns1.example.com", 1, "/ipns/ipfs.example.com", ErrResolveRecursion)
-	testResolution(t, r, "dns2.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "dns2.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
 	testResolution(t, r, "dns2.example.com", 1, "/ipns/dns1.example.com", ErrResolveRecursion)
 	testResolution(t, r, "dns2.example.com", 2, "/ipns/ipfs.example.com", ErrResolveRecursion)
-	testResolution(t, r, "multi.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "multi.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
 	testResolution(t, r, "multi.example.com", 1, "/ipns/dns1.example.com", ErrResolveRecursion)
 	testResolution(t, r, "multi.example.com", 2, "/ipns/ipfs.example.com", ErrResolveRecursion)
-	testResolution(t, r, "equals.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/=equals", nil)
+	testResolution(t, r, "equals.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/=equals", nil)
 	testResolution(t, r, "loop1.example.com", 1, "/ipns/loop2.example.com", ErrResolveRecursion)
 	testResolution(t, r, "loop1.example.com", 2, "/ipns/loop1.example.com", ErrResolveRecursion)
 	testResolution(t, r, "loop1.example.com", 3, "/ipns/loop2.example.com", ErrResolveRecursion)
-	testResolution(t, r, "loop1.example.com", DefaultDepthLimit, "/ipns/loop1.example.com", ErrResolveRecursion)
+	testResolution(t, r, "loop1.example.com", opts.DefaultDepthLimit, "/ipns/loop1.example.com", ErrResolveRecursion)
 	testResolution(t, r, "dloop1.example.com", 1, "/ipns/loop2.example.com", ErrResolveRecursion)
 	testResolution(t, r, "dloop1.example.com", 2, "/ipns/loop1.example.com", ErrResolveRecursion)
 	testResolution(t, r, "dloop1.example.com", 3, "/ipns/loop2.example.com", ErrResolveRecursion)
-	testResolution(t, r, "dloop1.example.com", DefaultDepthLimit, "/ipns/loop1.example.com", ErrResolveRecursion)
-	testResolution(t, r, "bad.example.com", DefaultDepthLimit, "", ErrResolveFailed)
-	testResolution(t, r, "withsegment.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment", nil)
-	testResolution(t, r, "withrecsegment.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/subsub", nil)
-	testResolution(t, r, "withsegment.example.com/test1", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/test1", nil)
-	testResolution(t, r, "withrecsegment.example.com/test2", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/subsub/test2", nil)
-	testResolution(t, r, "withrecsegment.example.com/test3/", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/subsub/test3/", nil)
-	testResolution(t, r, "withtrailingrec.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/", nil)
-	testResolution(t, r, "double.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
-	testResolution(t, r, "conflict.example.com", DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjE", nil)
+	testResolution(t, r, "dloop1.example.com", opts.DefaultDepthLimit, "/ipns/loop1.example.com", ErrResolveRecursion)
+	testResolution(t, r, "bad.example.com", opts.DefaultDepthLimit, "", ErrResolveFailed)
+	testResolution(t, r, "withsegment.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment", nil)
+	testResolution(t, r, "withrecsegment.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/subsub", nil)
+	testResolution(t, r, "withsegment.example.com/test1", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/test1", nil)
+	testResolution(t, r, "withrecsegment.example.com/test2", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/subsub/test2", nil)
+	testResolution(t, r, "withrecsegment.example.com/test3/", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/subsub/test3/", nil)
+	testResolution(t, r, "withtrailingrec.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD/sub/segment/", nil)
+	testResolution(t, r, "double.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "conflict.example.com", opts.DefaultDepthLimit, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjE", nil)
+	testResolution(t, r, "fqdn.example.com.", opts.DefaultDepthLimit, "/ipfs/QmYvMB9yrsSf7RKBghkfwmHJkzJhW2ZgVwq3LxBXXPasFr", nil)
+	testResolution(t, r, "www.wealdtech.eth", 1, "/ipns/ipfs.example.com", ErrResolveRecursion)
+	testResolution(t, r, "www.wealdtech.eth", 2, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
+	testResolution(t, r, "www.wealdtech.eth.link", 2, "/ipfs/QmY3hE8xgFCjGcz6PHgnvJz5HZi1BaKRfPkn1ghZUcYMjD", nil)
 }

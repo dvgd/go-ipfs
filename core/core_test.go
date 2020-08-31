@@ -6,8 +6,10 @@ import (
 	context "context"
 
 	"github.com/ipfs/go-ipfs/repo"
-	config "github.com/ipfs/go-ipfs/repo/config"
-	ds2 "github.com/ipfs/go-ipfs/thirdparty/datastore2"
+
+	datastore "github.com/ipfs/go-datastore"
+	syncds "github.com/ipfs/go-datastore/sync"
+	config "github.com/ipfs/go-ipfs-config"
 )
 
 func TestInitialization(t *testing.T) {
@@ -18,16 +20,16 @@ func TestInitialization(t *testing.T) {
 		{
 			Identity: id,
 			Addresses: config.Addresses{
-				Swarm: []string{"/ip4/0.0.0.0/tcp/4001"},
-				API:   "/ip4/127.0.0.1/tcp/8000",
+				Swarm: []string{"/ip4/0.0.0.0/tcp/4001", "/ip4/0.0.0.0/udp/4001/quic"},
+				API:   []string{"/ip4/127.0.0.1/tcp/8000"},
 			},
 		},
 
 		{
 			Identity: id,
 			Addresses: config.Addresses{
-				Swarm: []string{"/ip4/0.0.0.0/tcp/4001"},
-				API:   "/ip4/127.0.0.1/tcp/8000",
+				Swarm: []string{"/ip4/0.0.0.0/tcp/4001", "/ip4/0.0.0.0/udp/4001/quic"},
+				API:   []string{"/ip4/127.0.0.1/tcp/8000"},
 			},
 		},
 	}
@@ -39,7 +41,7 @@ func TestInitialization(t *testing.T) {
 	for i, c := range good {
 		r := &repo.Mock{
 			C: *c,
-			D: ds2.ThreadSafeCloserMapDatastore(),
+			D: syncds.MutexWrap(datastore.NewMapDatastore()),
 		}
 		n, err := NewNode(ctx, &BuildCfg{Repo: r})
 		if n == nil || err != nil {
@@ -50,7 +52,7 @@ func TestInitialization(t *testing.T) {
 	for i, c := range bad {
 		r := &repo.Mock{
 			C: *c,
-			D: ds2.ThreadSafeCloserMapDatastore(),
+			D: syncds.MutexWrap(datastore.NewMapDatastore()),
 		}
 		n, err := NewNode(ctx, &BuildCfg{Repo: r})
 		if n != nil || err == nil {

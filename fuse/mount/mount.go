@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"time"
 
-	logging "gx/ipfs/QmRb5jh8z2E8hMGN2tkvs1yHynUanqnZ3UeKwgN1i9P1F8/go-log"
-	goprocess "gx/ipfs/QmSF8fPo3jgVBAy8fpdjjYqgG87dkJgUprRBHRd2tmfgpP/goprocess"
+	logging "github.com/ipfs/go-log"
+	goprocess "github.com/jbenet/goprocess"
 )
 
 var log = logging.Logger("mount")
@@ -36,16 +36,11 @@ type Mount interface {
 // It does so by calling diskutil or fusermount directly.
 func ForceUnmount(m Mount) error {
 	point := m.MountPoint()
-	log.Warningf("Force-Unmounting %s...", point)
+	log.Warnf("Force-Unmounting %s...", point)
 
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("diskutil", "umount", "force", point)
-	case "linux":
-		cmd = exec.Command("fusermount", "-u", point)
-	default:
-		return fmt.Errorf("unmount: unimplemented")
+	cmd, err := UnmountCmd(point)
+	if err != nil {
+		return err
 	}
 
 	errc := make(chan error, 1)
@@ -69,6 +64,19 @@ func ForceUnmount(m Mount) error {
 	}
 }
 
+// UnmountCmd creates an exec.Cmd that is GOOS-specific
+// for unmount a FUSE mount
+func UnmountCmd(point string) (*exec.Cmd, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("diskutil", "umount", "force", point), nil
+	case "linux":
+		return exec.Command("fusermount", "-u", point), nil
+	default:
+		return nil, fmt.Errorf("unmount: unimplemented")
+	}
+}
+
 // ForceUnmountManyTimes attempts to forcibly unmount a given mount,
 // many times. It does so by calling diskutil or fusermount directly.
 // Attempts a given number of times.
@@ -82,7 +90,7 @@ func ForceUnmountManyTimes(m Mount, attempts int) error {
 
 		<-time.After(time.Millisecond * 500)
 	}
-	return fmt.Errorf("Unmount %s failed after 10 seconds of trying.", m.MountPoint())
+	return fmt.Errorf("unmount %s failed after 10 seconds of trying", m.MountPoint())
 }
 
 type closer struct {
@@ -90,7 +98,7 @@ type closer struct {
 }
 
 func (c *closer) Close() error {
-	log.Warning(" (c *closer) Close(),", c.M.MountPoint())
+	log.Warn(" (c *closer) Close(),", c.M.MountPoint())
 	return c.M.Unmount()
 }
 

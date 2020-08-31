@@ -1,5 +1,7 @@
 #!/bin/sh
 
+GOCC=${GOCC=go}
+
 die() {
 	echo "$@" >&2
 	exit 1
@@ -9,7 +11,7 @@ have_binary() {
 	type "$1" > /dev/null 2> /dev/null
 }
 
-check_writeable() {
+check_writable() {
 	printf "" > "$1" && rm "$1"
 }
 
@@ -39,7 +41,7 @@ download() {
 
 	test "$#" -eq "2" || die "download requires exactly two arguments, was given $@"
 
-	if ! check_writeable "$dl_output"; then
+	if ! check_writable "$dl_output"; then
 		die "download error: cannot write to $dl_output"
 	fi
 
@@ -65,7 +67,7 @@ unarchive() {
 	fi
 	ua_outfile="$ua_outfile$ua_binpostfix"
 
-	if ! check_writeable "$ua_outfile"; then
+	if ! check_writable "$ua_outfile"; then
 		die "unarchive error: cannot write to $ua_outfile"
 	fi
 
@@ -99,7 +101,7 @@ get_go_vars() {
 	if [ ! -z "$GOOS" ] && [ ! -z "$GOARCH" ]; then
 		printf "%s-%s" "$GOOS" "$GOARCH"
 	elif have_binary go; then
-		printf "%s-%s" "$(go env GOOS)" "$(go env GOARCH)"
+		printf "%s-%s" "$($GOCC env GOOS)" "$($GOCC env GOARCH)"
 	else
 		die "no way of determining system GOOS and GOARCH\nPlease manually set GOOS and GOARCH then retry."
 	fi

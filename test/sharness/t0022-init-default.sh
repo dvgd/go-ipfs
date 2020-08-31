@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright (c) 2014 Christian Couder
 # MIT Licensed; see the LICENSE file in this repository.
@@ -16,7 +16,7 @@ test_expect_success "ipfs init succeeds" '
   export IPFS_PATH="$(pwd)/.ipfs" &&
   echo "IPFS_PATH: \"$IPFS_PATH\"" &&
   BITS="2048" &&
-  ipfs init --bits="$BITS" >actual_init ||
+  ipfs init >actual_init ||
   test_fsh cat actual_init
 '
 

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright (c) 2015 Matt Bell
 # MIT Licensed; see the LICENSE file in this repository.
@@ -20,7 +20,7 @@ test_ipfs_get_flag() {
   '
 
   test_expect_success "ipfs get $flag output looks good" '
-    printf "%s\n\n" "Saving archive to $HASH$ext" >expected &&
+    printf "%s\n" "Saving archive to $HASH$ext" >expected &&
     test_cmp expected actual
   '
 
@@ -51,7 +51,7 @@ test_get_cmd() {
   '
 
   test_expect_success "ipfs get output looks good" '
-    printf "%s\n\n" "Saving file(s) to $HASH" >expected &&
+    printf "%s\n" "Saving file(s) to $HASH" >expected &&
     test_cmp expected actual
   '
 
@@ -70,7 +70,7 @@ test_get_cmd() {
   '
 
   test_expect_success "ipfs get output looks good" '
-    printf "%s\n\n" "Saving file(s) to $HASH2" >expected2 &&
+    printf "%s\n" "Saving file(s) to $HASH2" >expected2 &&
     test_cmp expected2 actual2
   '
 
@@ -94,11 +94,19 @@ test_get_cmd() {
   '
 
   test_expect_success "ipfs get output looks good (directory)" '
-    printf "%s\n\n" "Saving file(s) to $HASH2" >expected &&
+    printf "%s\n" "Saving file(s) to $HASH2" >expected &&
     test_cmp expected actual
   '
 
   test_expect_success "ipfs get output is valid (directory)" '
+    test_cmp dir/a "$HASH2"/a &&
+    test_cmp dir/b/c "$HASH2"/b/c &&
+    rm -r "$HASH2"
+  '
+
+  # Test issue #4720: problems when path contains a trailing slash.
+  test_expect_success "ipfs get with slash (directory)" '
+    ipfs get "$HASH2/" &&
     test_cmp dir/a "$HASH2"/a &&
     test_cmp dir/b/c "$HASH2"/b/c &&
     rm -r "$HASH2"
@@ -109,7 +117,7 @@ test_get_cmd() {
   '
 
   test_expect_success "ipfs get -a -C output looks good (directory)" '
-    printf "%s\n\n" "Saving archive to $HASH2.tar.gz" >expected &&
+    printf "%s\n" "Saving archive to $HASH2.tar.gz" >expected &&
     test_cmp expected actual
   '
 
@@ -121,7 +129,7 @@ test_get_cmd() {
   '
 
   test_expect_success "ipfs get ../.. should fail" '
-    echo "Error: invalid 'ipfs ref' path" >expected &&
+    echo "Error: invalid path \"../..\": selected encoding not supported" >expected &&
     test_must_fail ipfs get ../.. 2>actual &&
     test_cmp expected actual
   '
@@ -148,7 +156,7 @@ test_get_cmd() {
 }
 
 test_get_fail() {
-  test_expect_success "create an object that has unresolveable links" '
+  test_expect_success "create an object that has unresolvable links" '
     cat <<-\EOF >bad_object &&
 { "Links": [ { "Name": "foo", "Hash": "QmZzaC6ydNXiR65W8VjGA73ET9MZ6VFAqUT1ngYMXcpihn", "Size": 1897 }, { "Name": "bar", "Hash": "Qmd4mG6pDFDmDTn6p3hX1srP8qTbkyXKj5yjpEsiHDX3u8", "Size": 56 }, { "Name": "baz", "Hash": "QmUTjwRnG28dSrFFVTYgbr6LiDLsBmRr2SaUSTGheK2YqG", "Size": 24266 } ], "Data": "\b\u0001" }
 EOF
@@ -176,10 +184,8 @@ test_launch_ipfs_daemon
 test_get_cmd
 
 test_expect_success "empty request to get doesn't panic and returns error" '
-  curl "http://$API_ADDR/api/v0/get" > curl_out || true &&
-    grep "not enough arugments provided" curl_out
-
-
+  curl -X POST "http://$API_ADDR/api/v0/get" > curl_out || true &&
+    grep "argument \"ipfs-path\" is required" curl_out
 '
 test_kill_ipfs_daemon
 

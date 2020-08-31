@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	config "github.com/ipfs/go-ipfs/repo/config"
+	version "github.com/ipfs/go-ipfs"
 )
 
 type testcasecheckversion struct {
@@ -20,7 +20,7 @@ type testcasecheckversion struct {
 
 func (tc testcasecheckversion) body() string {
 	if !tc.shouldHandle && tc.responseBody == "" {
-		return fmt.Sprintf("%s (%s != %s)\n", errAPIVersionMismatch, config.ApiVersion, tc.userAgent)
+		return fmt.Sprintf("%s (%s != %s)\n", errAPIVersionMismatch, version.ApiVersion, tc.userAgent)
 	}
 
 	return tc.responseBody
@@ -30,14 +30,14 @@ func TestCheckVersionOption(t *testing.T) {
 	tcs := []testcasecheckversion{
 		{"/go-ipfs/0.1/", APIPath + "/test/", false, "", http.StatusBadRequest},
 		{"/go-ipfs/0.1/", APIPath + "/version", true, "check!", http.StatusOK},
-		{config.ApiVersion, APIPath + "/test", true, "check!", http.StatusOK},
+		{version.ApiVersion, APIPath + "/test", true, "check!", http.StatusOK},
 		{"Mozilla Firefox/no go-ipfs node", APIPath + "/test", true, "check!", http.StatusOK},
 		{"/go-ipfs/0.1/", "/webui", true, "check!", http.StatusOK},
 	}
 
 	for _, tc := range tcs {
 		t.Logf("%#v", tc)
-		r := httptest.NewRequest("POST", tc.uri, nil)
+		r := httptest.NewRequest(http.MethodPost, tc.uri, nil)
 		r.Header.Add("User-Agent", tc.userAgent) // old version, should fail
 
 		called := false
@@ -52,7 +52,9 @@ func TestCheckVersionOption(t *testing.T) {
 			if !tc.shouldHandle {
 				t.Error("handler was called even though version didn't match")
 			} else {
-				io.WriteString(w, "check!")
+				if _, err := io.WriteString(w, "check!"); err != nil {
+					t.Error(err)
+				}
 			}
 		})
 

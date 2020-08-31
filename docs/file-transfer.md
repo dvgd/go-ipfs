@@ -45,15 +45,17 @@ addresses (like the example below), then your nodes are online.
         "ID": "QmTNwsFkLAed15kQEC1ZJWPfoNbBQnMFojfJKQ9sZj1dk8",
         "PublicKey": "CAASpgIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDZb6znj3LQZKP1+X81exf+vbnqNCMtHjZ5RKTCm7Fytnfe+AI1fhs9YbZdkgFkM1HLxmIOLQj2bMXPIGxUM+EnewN8tWurx4B3+lR/LWNwNYcCFL+jF2ltc6SE6BC8kMLEZd4zidOLPZ8lIRpd0x3qmsjhGefuRwrKeKlR4tQ3C76ziOms47uLdiVVkl5LyJ5+mn4rXOjNKt/oy2O4m1St7X7/yNt8qQgYsPfe/hCOywxCEIHEkqmil+vn7bu4RpAtsUzCcBDoLUIWuU3i6qfytD05hP8Clo+at+l//ctjMxylf3IQ5qyP+yfvazk+WHcsB0tWueEmiU5P2nfUUIR3AgMBAAE=",
         "Addresses": [
-                "/ip4/127.0.0.1/tcp/4001/ipfs/QmTNwsFkLAed15kQEC1ZJWPfoNbBQnMFojfJKQ9sZj1dk8",
-                "/ip4/192.168.2.131/tcp/4001/ipfs/QmTNwsFkLAed15kQEC1ZJWPfoNbBQnMFojfJKQ9sZj1dk8",
+                "/ip4/127.0.0.1/tcp/4001/p2p/QmTNwsFkLAed15kQEC1ZJWPfoNbBQnMFojfJKQ9sZj1dk8",
+                "/ip4/127.0.0.1/udp/4001/quic/p2p/QmTNwsFkLAed15kQEC1ZJWPfoNbBQnMFojfJKQ9sZj1dk8",
+                "/ip4/192.168.2.131/tcp/4001/p2p/QmTNwsFkLAed15kQEC1ZJWPfoNbBQnMFojfJKQ9sZj1dk8",
+                "/ip4/192.168.2.131/udp/4001/quic/p2p/QmTNwsFkLAed15kQEC1ZJWPfoNbBQnMFojfJKQ9sZj1dk8",
         ],
         "AgentVersion": "go-ipfs/0.4.11-dev/",
         "ProtocolVersion": "ipfs/0.1.0"
 }
 ```
 
-Next, check to see if the nodes have a connection to eachother. You can do this
+Next, check to see if the nodes have a connection to each other. You can do this
 by running `ipfs swarm peers` on one node, and checking for the other nodes
 peer ID in the output. If the two nodes *are* connected, and the `ipfs get`
 command is still hanging, then something unexpected is going on, and I
@@ -84,21 +86,24 @@ knowing that it needs to, the likely culprit is a bad NAT. When node B learns
 that it needs to connect to node A, it checks the DHT for addresses for node A,
 and then starts trying to connect to them. We can check those addresses by
 running `ipfs dht findpeer <node A peerID>` on node B. This command should
-return a list of addresses for node A. If it doesnt return any addresses, then
+return a list of addresses for node A. If it doesn't return any addresses, then
 you should try running the manual providing command from the previous steps. 
 Example output of addresses might look something like this:
 
 ```
 /ip4/127.0.0.1/tcp/4001
+/ip4/127.0.0.1/udp/4001/quic
 /ip4/192.168.2.133/tcp/4001
+/ip4/192.168.2.133/udp/4001/quic
 /ip4/88.157.217.196/tcp/63674
+/ip4/88.157.217.196/udp/63674/quic
 ```
 
 In this case, we can see a localhost (127.0.0.1) address, a LAN address (the
 192.168.*.* one) and another address. If this third address matches your
 external IP, then the network knows a valid external address for your node. At
 this point, its safe to assume that your node has a difficult to traverse NAT
-situation. If this is the case, you can try to enable upnp or NAT-PMP on the
+situation. If this is the case, you can try to enable UPnP or NAT-PMP on the
 router of node A and retry the process. Otherwise, you can try manually
 connecting node A to node B.
 

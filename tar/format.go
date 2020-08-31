@@ -8,15 +8,15 @@ import (
 	"io"
 	"strings"
 
-	importer "github.com/ipfs/go-ipfs/importer"
-	dag "github.com/ipfs/go-ipfs/merkledag"
-	dagutil "github.com/ipfs/go-ipfs/merkledag/utils"
-	path "github.com/ipfs/go-ipfs/path"
-	uio "github.com/ipfs/go-ipfs/unixfs/io"
+	dag "github.com/ipfs/go-merkledag"
+	"github.com/ipfs/go-merkledag/dagutils"
+	path "github.com/ipfs/go-path"
+	importer "github.com/ipfs/go-unixfs/importer"
+	uio "github.com/ipfs/go-unixfs/io"
 
-	logging "gx/ipfs/QmRb5jh8z2E8hMGN2tkvs1yHynUanqnZ3UeKwgN1i9P1F8/go-log"
-	chunker "gx/ipfs/QmWo8jYc19ppG7YoTsrr2kEtLRbARTJho5oNXFTR6B7Peq/go-ipfs-chunker"
-	ipld "gx/ipfs/Qme5bWv7wtjUNGsK2BNGVUFPKiuxWrsqrtvYwCLRw8YFES/go-ipld-format"
+	chunker "github.com/ipfs/go-ipfs-chunker"
+	ipld "github.com/ipfs/go-ipld-format"
+	logging "github.com/ipfs/go-log"
 )
 
 var log = logging.Logger("tarfmt")
@@ -42,7 +42,7 @@ func ImportTar(ctx context.Context, r io.Reader, ds ipld.DAGService) (*dag.Proto
 	root := new(dag.ProtoNode)
 	root.SetData([]byte("ipfs/tar"))
 
-	e := dagutil.NewDagEditor(root, ds)
+	e := dagutils.NewDagEditor(root, ds)
 
 	for {
 		h, err := tr.Next()
@@ -69,7 +69,7 @@ func ImportTar(ctx context.Context, r io.Reader, ds ipld.DAGService) (*dag.Proto
 				return nil, err
 			}
 
-			err = header.AddNodeLinkClean("data", nd)
+			err = header.AddNodeLink("data", nd)
 			if err != nil {
 				return nil, err
 			}

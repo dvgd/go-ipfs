@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
-	core "github.com/ipfs/go-ipfs/core"
-	coreunix "github.com/ipfs/go-ipfs/core/coreunix"
+	bootstrap2 "github.com/ipfs/go-ipfs/core/bootstrap"
+	"github.com/ipfs/go-ipfs/core/coreapi"
 	mock "github.com/ipfs/go-ipfs/core/mock"
 	"github.com/ipfs/go-ipfs/thirdparty/unit"
 
-	mocknet "gx/ipfs/QmNh1kGFFdsPu79KNSaL4NUKUPb4Eiz4KHdMtFY6664RDp/go-libp2p/p2p/net/mock"
-	testutil "gx/ipfs/QmVvkK7s5imCiq3JVbL3pGfnhcCnf3LrFJPF4GE2sAoGZf/go-testutil"
-	pstore "gx/ipfs/QmXauCuJzmzapetmC6W4TuDJLL1yFFrVzSHoWv8YdbmnxH/go-libp2p-peerstore"
+	files "github.com/ipfs/go-ipfs-files"
+	peer "github.com/libp2p/go-libp2p-core/peer"
+	testutil "github.com/libp2p/go-libp2p-testing/net"
+	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 )
 
 func TestThreeLeggedCatTransfer(t *testing.T) {
@@ -74,36 +75,41 @@ func RunThreeLeggedCat(data []byte, conf testutil.LatencyConfig) error {
 		Bandwidth: math.MaxInt32,
 	})
 
-	bootstrap, err := core.NewNode(ctx, &core.BuildCfg{
-		Online: true,
-		Host:   mock.MockHostOption(mn),
-	})
+	bootstrap, err := mock.MockPublicNode(ctx, mn)
 	if err != nil {
 		return err
 	}
 	defer bootstrap.Close()
 
-	adder, err := core.NewNode(ctx, &core.BuildCfg{
-		Online: true,
-		Host:   mock.MockHostOption(mn),
-	})
+	adder, err := mock.MockPublicNode(ctx, mn)
 	if err != nil {
 		return err
 	}
 	defer adder.Close()
 
-	catter, err := core.NewNode(ctx, &core.BuildCfg{
-		Online: true,
-		Host:   mock.MockHostOption(mn),
-	})
+	catter, err := mock.MockPublicNode(ctx, mn)
 	if err != nil {
 		return err
 	}
 	defer catter.Close()
-	mn.LinkAll()
+
+	adderApi, err := coreapi.NewCoreAPI(adder)
+	if err != nil {
+		return err
+	}
+
+	catterApi, err := coreapi.NewCoreAPI(catter)
+	if err != nil {
+		return err
+	}
+
+	err = mn.LinkAll()
+	if err != nil {
+		return err
+	}
 
 	bis := bootstrap.Peerstore.PeerInfo(bootstrap.PeerHost.ID())
-	bcfg := core.BootstrapConfigWithPeers([]pstore.PeerInfo{bis})
+	bcfg := bootstrap2.BootstrapConfigWithPeers([]peer.AddrInfo{bis})
 	if err := adder.Bootstrap(bcfg); err != nil {
 		return err
 	}
@@ -111,22 +117,24 @@ func RunThreeLeggedCat(data []byte, conf testutil.LatencyConfig) error {
 		return err
 	}
 
-	added, err := coreunix.Add(adder, bytes.NewReader(data))
+	added, err := adderApi.Unixfs().Add(ctx, files.NewBytesFile(data))
 	if err != nil {
 		return err
 	}
 
-	readerCatted, err := coreunix.Cat(ctx, catter, added)
+	readerCatted, err := catterApi.Unixfs().Get(ctx, added)
 	if err != nil {
 		return err
 	}
 
 	// verify
-	bufout := new(bytes.Buffer)
-	io.Copy(bufout, readerCatted)
-	if 0 != bytes.Compare(bufout.Bytes(), data) {
+	var bufout bytes.Buffer
+	_, err = io.Copy(&bufout, readerCatted.(io.Reader))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(bufout.Bytes(), data) {
 		return errors.New("catted data does not match added data")
 	}
-	cancel()
 	return nil
 }

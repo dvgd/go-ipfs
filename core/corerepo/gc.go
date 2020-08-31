@@ -7,18 +7,18 @@ import (
 	"time"
 
 	"github.com/ipfs/go-ipfs/core"
-	mfs "github.com/ipfs/go-ipfs/mfs"
-	gc "github.com/ipfs/go-ipfs/pin/gc"
-	repo "github.com/ipfs/go-ipfs/repo"
+	"github.com/ipfs/go-ipfs/gc"
+	"github.com/ipfs/go-ipfs/repo"
 
-	humanize "gx/ipfs/QmPSBJL4momYnE7DcUyk2DVhD6rH488ZmHBGLbxNdhU44K/go-humanize"
-	logging "gx/ipfs/QmRb5jh8z2E8hMGN2tkvs1yHynUanqnZ3UeKwgN1i9P1F8/go-log"
-	cid "gx/ipfs/QmcZfnkapfECQGcLZaf9B79NRg7cRa9EnZh4LSbkCzwNvY/go-cid"
+	"github.com/dustin/go-humanize"
+	"github.com/ipfs/go-cid"
+	logging "github.com/ipfs/go-log"
+	"github.com/ipfs/go-mfs"
 )
 
 var log = logging.Logger("corerepo")
 
-var ErrMaxStorageExceeded = errors.New("Maximum storage limit exceeded. Maybe unpin some files?")
+var ErrMaxStorageExceeded = errors.New("maximum storage limit exceeded. Try to unpin some files")
 
 type GC struct {
 	Node       *core.IpfsNode
@@ -40,11 +40,15 @@ func NewGC(n *core.IpfsNode) (*GC, error) {
 	// TODO: there should be a general check for all of the cfg fields
 	// maybe distinguish between user config file and default struct?
 	if cfg.Datastore.StorageMax == "" {
-		r.SetConfigKey("Datastore.StorageMax", "10GB")
+		if err := r.SetConfigKey("Datastore.StorageMax", "10GB"); err != nil {
+			return nil, err
+		}
 		cfg.Datastore.StorageMax = "10GB"
 	}
 	if cfg.Datastore.StorageGCWatermark == 0 {
-		r.SetConfigKey("Datastore.StorageGCWatermark", 90)
+		if err := r.SetConfigKey("Datastore.StorageGCWatermark", 90); err != nil {
+			return nil, err
+		}
 		cfg.Datastore.StorageGCWatermark = 90
 	}
 
@@ -70,18 +74,16 @@ func NewGC(n *core.IpfsNode) (*GC, error) {
 	}, nil
 }
 
-func BestEffortRoots(filesRoot *mfs.Root) ([]*cid.Cid, error) {
-	rootDag, err := filesRoot.GetValue().GetNode()
+func BestEffortRoots(filesRoot *mfs.Root) ([]cid.Cid, error) {
+	rootDag, err := filesRoot.GetDirectory().GetNode()
 	if err != nil {
 		return nil, err
 	}
 
-	return []*cid.Cid{rootDag.Cid()}, nil
+	return []cid.Cid{rootDag.Cid()}, nil
 }
 
 func GarbageCollect(n *core.IpfsNode, ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel() // in case error occurs during operation
 	roots, err := BestEffortRoots(n.FilesRoot)
 	if err != nil {
 		return err
@@ -94,7 +96,7 @@ func GarbageCollect(n *core.IpfsNode, ctx context.Context) error {
 // CollectResult collects the output of a garbage collection run and calls the
 // given callback for each object removed.  It also collects all errors into a
 // MultiError which is returned after the gc is completed.
-func CollectResult(ctx context.Context, gcOut <-chan gc.Result, cb func(*cid.Cid)) error {
+func CollectResult(ctx context.Context, gcOut <-chan gc.Result, cb func(cid.Cid)) error {
 	var errors []error
 loop:
 	for {
@@ -105,7 +107,7 @@ loop:
 			}
 			if res.Error != nil {
 				errors = append(errors, res.Error)
-			} else if res.KeyRemoved != nil && cb != nil {
+			} else if res.KeyRemoved.Defined() && cb != nil {
 				cb(res.KeyRemoved)
 			}
 		case <-ctx.Done():
@@ -210,12 +212,11 @@ func (gc *GC) maybeGC(ctx context.Context, offset uint64) error {
 
 	if storage+offset > gc.StorageGC {
 		if storage+offset > gc.StorageMax {
-			log.Warningf("pre-GC: %s", ErrMaxStorageExceeded)
+			log.Warnf("pre-GC: %s", ErrMaxStorageExceeded)
 		}
 
 		// Do GC here
 		log.Info("Watermark exceeded. Starting repo GC...")
-		defer log.EventBegin(ctx, "repoGC").Done()
 
 		if err := GarbageCollect(gc.Node, ctx); err != nil {
 			return err

@@ -1,23 +1,25 @@
-// +build linux darwin freebsd netbsd openbsd
-// +build !nofuse
+// +build !windows,!nofuse
 
 package commands
 
 import (
 	"fmt"
 	"io"
-	"strings"
 
-	cmds "github.com/ipfs/go-ipfs/commands"
-	e "github.com/ipfs/go-ipfs/core/commands/e"
+	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
 	nodeMount "github.com/ipfs/go-ipfs/fuse/node"
-	config "github.com/ipfs/go-ipfs/repo/config"
 
-	"gx/ipfs/QmceUdzxkimdYsgtX733uNgzf1DLHyBKN6ehGSp85ayppM/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	config "github.com/ipfs/go-ipfs-config"
+)
+
+const (
+	mountIPFSPathOptionName = "ipfs-path"
+	mountIPNSPathOptionName = "ipns-path"
 )
 
 var MountCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
+	Helptext: cmds.HelpText{
 		Tagline: "Mounts IPFS to the filesystem (read-only).",
 		ShortDescription: `
 Mount IPFS at a read-only mountpoint on the OS (default: /ipfs and /ipns).
@@ -27,20 +29,20 @@ root will not be listable, as it is virtual. Access known paths directly.
 You may have to create /ipfs and /ipns before using 'ipfs mount':
 
 > sudo mkdir /ipfs /ipns
-> sudo chown ` + "`" + `whoami` + "`" + ` /ipfs /ipns
+> sudo chown $(whoami) /ipfs /ipns
 > ipfs daemon &
 > ipfs mount
 `,
 		LongDescription: `
 Mount IPFS at a read-only mountpoint on the OS. The default, /ipfs and /ipns,
-are set in the configuration file, but can be overriden by the options.
+are set in the configuration file, but can be overridden by the options.
 All IPFS objects will be accessible under this directory. Note that the
 root will not be listable, as it is virtual. Access known paths directly.
 
 You may have to create /ipfs and /ipns before using 'ipfs mount':
 
 > sudo mkdir /ipfs /ipns
-> sudo chown ` + "`" + `whoami` + "`" + ` /ipfs /ipns
+> sudo chown $(whoami) /ipfs /ipns
 > ipfs daemon &
 > ipfs mount
 
@@ -73,75 +75,54 @@ baz
 baz
 `,
 	},
-	Options: []cmdkit.Option{
-		cmdkit.StringOption("ipfs-path", "f", "The path where IPFS should be mounted."),
-		cmdkit.StringOption("ipns-path", "n", "The path where IPNS should be mounted."),
+	Options: []cmds.Option{
+		cmds.StringOption(mountIPFSPathOptionName, "f", "The path where IPFS should be mounted."),
+		cmds.StringOption(mountIPNSPathOptionName, "n", "The path where IPNS should be mounted."),
 	},
-	Run: func(req cmds.Request, res cmds.Response) {
-		cfg, err := req.InvocContext().GetConfig()
+	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
+		cfg, err := cmdenv.GetConfig(env)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		node, err := req.InvocContext().GetNode()
+		nd, err := cmdenv.GetNode(env)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
 		// error if we aren't running node in online mode
-		if node.LocalMode() {
-			res.SetError(errNotOnline, cmdkit.ErrClient)
-			return
+		if !nd.IsOnline {
+			return ErrNotOnline
 		}
 
-		fsdir, found, err := req.Option("f").String()
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
+		fsdir, found := req.Options[mountIPFSPathOptionName].(string)
 		if !found {
 			fsdir = cfg.Mounts.IPFS // use default value
 		}
 
 		// get default mount points
-		nsdir, found, err := req.Option("n").String()
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
+		nsdir, found := req.Options[mountIPNSPathOptionName].(string)
 		if !found {
 			nsdir = cfg.Mounts.IPNS // NB: be sure to not redeclare!
 		}
 
-		err = nodeMount.Mount(node, fsdir, nsdir)
+		err = nodeMount.Mount(nd, fsdir, nsdir)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
 		var output config.Mounts
 		output.IPFS = fsdir
 		output.IPNS = nsdir
-		res.SetOutput(&output)
+		return cmds.EmitOnce(res, &output)
 	},
 	Type: config.Mounts{},
-	Marshalers: cmds.MarshalerMap{
-		cmds.Text: func(res cmds.Response) (io.Reader, error) {
-			v, err := unwrapOutput(res.Output())
-			if err != nil {
-				return nil, err
-			}
+	Encoders: cmds.EncoderMap{
+		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, mounts *config.Mounts) error {
+			fmt.Fprintf(w, "IPFS mounted at: %s\n", mounts.IPFS)
+			fmt.Fprintf(w, "IPNS mounted at: %s\n", mounts.IPNS)
 
-			mnts, ok := v.(*config.Mounts)
-			if !ok {
-				return nil, e.TypeErr(mnts, v)
-			}
-
-			s := fmt.Sprintf("IPFS mounted at: %s\n", mnts.IPFS)
-			s += fmt.Sprintf("IPNS mounted at: %s\n", mnts.IPNS)
-			return strings.NewReader(s), nil
-		},
+			return nil
+		}),
 	},
 }

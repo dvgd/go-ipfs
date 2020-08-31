@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright (c) 2014 Christian Couder
 # MIT Licensed; see the LICENSE file in this repository.
@@ -41,14 +41,15 @@ test_expect_success "ipfs version --all has all required fields" '
   grep "Golang version" version_all.txt
 '
 
-test_expect_success "ipfs help succeeds" '
-  ipfs help >help.txt
+test_expect_success "ipfs version deps succeeds" '
+  ipfs version deps >deps.txt
 '
 
-test_expect_success "ipfs help output looks good" '
-  egrep -i "^Usage" help.txt >/dev/null &&
-  egrep "ipfs <command>" help.txt >/dev/null ||
-  test_fsh cat help.txt
+test_expect_success "ipfs version deps output looks good ( set \$GOIPFSTEST_SKIP_LOCAL_DEVTREE_DEPS_CHECK to skip this test )" '
+  head -1 deps.txt | grep "go-ipfs@(devel)" &&
+  [[ "$GOIPFSTEST_SKIP_LOCAL_DEVTREE_DEPS_CHECK" == "1" ]] ||
+  [[ $(tail -n +2 deps.txt | egrep -v -c "^[^ @]+@v[^ @]+( => [^ @]+@v[^ @]+)?$") -eq 0 ]] ||
+  test_fsh cat deps.txt
 '
 
 test_expect_success "'ipfs commands' succeeds" '
@@ -61,12 +62,29 @@ test_expect_success "'ipfs commands' output looks good" '
   grep "ipfs update" commands.txt
 '
 
+test_expect_success "All sub-commands accept help" '
+  echo 0 > fail
+  while read -r cmd
+  do
+    ${cmd:0:4} help ${cmd:5} >/dev/null ||
+      { echo "$cmd does not accept --help"; echo 1 > fail; }
+    echo stuff | $cmd --help >/dev/null ||
+      { echo "$cmd does not accept --help when using stdin"; echo 1 > fail; }
+  done <commands.txt
+
+  if [ $(cat fail) = 1 ]; then
+    return 1
+  fi
+'
+
 test_expect_success "All commands accept --help" '
   echo 0 > fail
   while read -r cmd
   do
-    $cmd --help </dev/null >/dev/null ||
-      { echo $cmd doesnt accept --help; echo 1 > fail; }
+    $cmd --help >/dev/null ||
+      { echo "$cmd does not accept --help"; echo 1 > fail; }
+    echo stuff | $cmd --help >/dev/null ||
+      { echo "$cmd does not accept --help when using stdin"; echo 1 > fail; }
   done <commands.txt
 
   if [ $(cat fail) = 1 ]; then
@@ -76,11 +94,12 @@ test_expect_success "All commands accept --help" '
 
 test_expect_failure "All ipfs root commands are mentioned in base helptext" '
   echo 0 > fail
+  ipfs --help > help.txt
   cut -d" " -f 2 commands.txt | grep -v ipfs | sort -u | \
   while read cmd
   do
     grep "  $cmd" help.txt > /dev/null ||
-      { echo missing $cmd from helptext; echo 1 > fail; }
+      { echo "missing $cmd from helptext"; echo 1 > fail; }
   done
 
   if [ $(cat fail) = 1 ]; then
@@ -94,7 +113,20 @@ test_expect_failure "All ipfs commands docs are 80 columns or less" '
   do
     LENGTH="$($cmd --help | awk "{ print length }" | sort -nr | head -1)"
     [ $LENGTH -gt 80 ] &&
-      { echo "$cmd" help text is longer than 79 chars "($LENGTH)"; echo 1 > fail; }
+      { echo "$cmd help text is longer than 79 chars ($LENGTH)"; echo 1 > fail; }
+  done <commands.txt
+
+  if [ $(cat fail) = 1 ]; then
+    return 1
+  fi
+'
+
+test_expect_success "All ipfs commands fail when passed a bad flag" '
+  echo 0 > fail
+  while read -r cmd
+  do
+    test_must_fail $cmd --badflag >/dev/null 2>&1 ||
+      { echo "$cmd exit with code 0 when passed --badflag"; echo 1 > fail; }
   done <commands.txt
 
   if [ $(cat fail) = 1 ]; then

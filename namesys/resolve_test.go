@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	path "github.com/ipfs/go-ipfs/path"
-
-	ds "gx/ipfs/QmPpegoMqhAEqjncrzArm7KVWAkCm78rqL2DPuNjhPrshg/go-datastore"
-	dssync "gx/ipfs/QmPpegoMqhAEqjncrzArm7KVWAkCm78rqL2DPuNjhPrshg/go-datastore/sync"
-	testutil "gx/ipfs/QmVvkK7s5imCiq3JVbL3pGfnhcCnf3LrFJPF4GE2sAoGZf/go-testutil"
-	mockrouting "gx/ipfs/QmZRcGYvxdauCd7hHnMYLYqcZRaDjv24c7eUNyJojAcdBb/go-ipfs-routing/mock"
-	peer "gx/ipfs/QmZoWKhxUmZ2seW4BzX6fJkNR8hh9PsGModr7q171yq2SS/go-libp2p-peer"
+	ds "github.com/ipfs/go-datastore"
+	dssync "github.com/ipfs/go-datastore/sync"
+	mockrouting "github.com/ipfs/go-ipfs-routing/mock"
+	ipns "github.com/ipfs/go-ipns"
+	path "github.com/ipfs/go-path"
+	testutil "github.com/libp2p/go-libp2p-testing/net"
+	tnet "github.com/libp2p/go-libp2p-testing/net"
 )
 
 func TestRoutingResolve(t *testing.T) {
@@ -21,26 +21,18 @@ func TestRoutingResolve(t *testing.T) {
 	id := testutil.RandIdentityOrFatal(t)
 	d := serv.ClientWithDatastore(context.Background(), id, dstore)
 
-	resolver := NewRoutingResolver(d, 0)
-	publisher := NewRoutingPublisher(d, dstore)
+	resolver := NewIpnsResolver(d)
+	publisher := NewIpnsPublisher(d, dstore)
 
-	privk, pubk, err := testutil.RandTestKeyPair(512)
-	if err != nil {
-		t.Fatal(err)
-	}
+	identity := tnet.RandIdentityOrFatal(t)
 
 	h := path.FromString("/ipfs/QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN")
-	err = publisher.Publish(context.Background(), privk, h)
+	err := publisher.Publish(context.Background(), identity.PrivateKey(), h)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pid, err := peer.IDFromPublicKey(pubk)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := resolver.Resolve(context.Background(), pid.Pretty())
+	res, err := resolver.Resolve(context.Background(), identity.ID().Pretty())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,34 +46,31 @@ func TestPrexistingExpiredRecord(t *testing.T) {
 	dstore := dssync.MutexWrap(ds.NewMapDatastore())
 	d := mockrouting.NewServer().ClientWithDatastore(context.Background(), testutil.RandIdentityOrFatal(t), dstore)
 
-	resolver := NewRoutingResolver(d, 0)
-	publisher := NewRoutingPublisher(d, dstore)
+	resolver := NewIpnsResolver(d)
+	publisher := NewIpnsPublisher(d, dstore)
 
-	privk, pubk, err := testutil.RandTestKeyPair(512)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	id, err := peer.IDFromPublicKey(pubk)
-	if err != nil {
-		t.Fatal(err)
-	}
+	identity := tnet.RandIdentityOrFatal(t)
 
 	// Make an expired record and put it in the datastore
 	h := path.FromString("/ipfs/QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN")
 	eol := time.Now().Add(time.Hour * -1)
-	err = PutRecordToRouting(context.Background(), privk, h, 0, eol, d, id)
+
+	entry, err := ipns.Create(identity.PrivateKey(), []byte(h), 0, eol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = PutRecordToRouting(context.Background(), d, identity.PublicKey(), entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Now, with an old record in the system already, try and publish a new one
-	err = publisher.Publish(context.Background(), privk, h)
+	err = publisher.Publish(context.Background(), identity.PrivateKey(), h)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = verifyCanResolve(resolver, id.Pretty(), h)
+	err = verifyCanResolve(resolver, identity.ID().Pretty(), h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,34 +80,30 @@ func TestPrexistingRecord(t *testing.T) {
 	dstore := dssync.MutexWrap(ds.NewMapDatastore())
 	d := mockrouting.NewServer().ClientWithDatastore(context.Background(), testutil.RandIdentityOrFatal(t), dstore)
 
-	resolver := NewRoutingResolver(d, 0)
-	publisher := NewRoutingPublisher(d, dstore)
+	resolver := NewIpnsResolver(d)
+	publisher := NewIpnsPublisher(d, dstore)
 
-	privk, pubk, err := testutil.RandTestKeyPair(512)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	id, err := peer.IDFromPublicKey(pubk)
-	if err != nil {
-		t.Fatal(err)
-	}
+	identity := tnet.RandIdentityOrFatal(t)
 
 	// Make a good record and put it in the datastore
 	h := path.FromString("/ipfs/QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN")
 	eol := time.Now().Add(time.Hour)
-	err = PutRecordToRouting(context.Background(), privk, h, 0, eol, d, id)
+	entry, err := ipns.Create(identity.PrivateKey(), []byte(h), 0, eol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = PutRecordToRouting(context.Background(), d, identity.PublicKey(), entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Now, with an old record in the system already, try and publish a new one
-	err = publisher.Publish(context.Background(), privk, h)
+	err = publisher.Publish(context.Background(), identity.PrivateKey(), h)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = verifyCanResolve(resolver, id.Pretty(), h)
+	err = verifyCanResolve(resolver, identity.ID().Pretty(), h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +116,7 @@ func verifyCanResolve(r Resolver, name string, exp path.Path) error {
 	}
 
 	if res != exp {
-		return errors.New("got back wrong record!")
+		return errors.New("got back wrong record")
 	}
 
 	return nil

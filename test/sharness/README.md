@@ -16,6 +16,13 @@ The usual ipfs env flags also apply:
 IPFS_LOGGING=debug TEST_VERBOSE=1 make
 ```
 
+To make the tests abort as soon as an error occurs, use the TEST_IMMEDIATE env variable:
+
+```sh
+# this will abort as soon the first error occurs
+TEST_IMMEDIATE=1 make
+```
+
 ## Running just one test
 
 You can run only one test script by launching it like a regular shell
@@ -45,7 +52,7 @@ directory.
 Please do not change anything in the "lib/sharness" directory.
 
 If you really need some changes in sharness, please fork it from
-[its cannonical repo](https://github.com/mlafeldt/sharness/) and
+[its canonical repo](https://github.com/mlafeldt/sharness/) and
 send pull requests there.
 
 ## Writing Tests
@@ -80,7 +87,7 @@ test_expect_success ".ipfs/ has been created" '
 
 The `|| ...` is a diagnostic run when the preceding command fails.
 test_fsh is a shell function that echoes the args, runs the cmd,
-and then also fails, making sure the test case fails. (wouldnt want
+and then also fails, making sure the test case fails. (wouldn't want
 the diagnostic accidentally returning true and making it _seem_ like
 the test case succeeded!).
 
@@ -100,7 +107,7 @@ test_expect_success "'ipfs add --help' succeeds" '
 
 # other tests here...
 
-# dont forget to kill the daemon!!
+# don't forget to kill the daemon!!
 test_kill_ipfs_daemon
 ```
 
@@ -119,6 +126,6 @@ test_mount_ipfs
 
 # tests mounted here
 
-# dont forget to kill the daemon!!
+# don't forget to kill the daemon!!
 test_kill_ipfs_daemon
 ```

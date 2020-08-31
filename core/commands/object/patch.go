@@ -1,26 +1,18 @@
 package objectcmd
 
 import (
+	"fmt"
 	"io"
-	"io/ioutil"
-	"strings"
 
-	cmds "github.com/ipfs/go-ipfs/commands"
-	core "github.com/ipfs/go-ipfs/core"
-	e "github.com/ipfs/go-ipfs/core/commands/e"
-	dag "github.com/ipfs/go-ipfs/merkledag"
-	dagutils "github.com/ipfs/go-ipfs/merkledag/utils"
-	path "github.com/ipfs/go-ipfs/path"
-	ft "github.com/ipfs/go-ipfs/unixfs"
+	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
 
-	logging "gx/ipfs/QmRb5jh8z2E8hMGN2tkvs1yHynUanqnZ3UeKwgN1i9P1F8/go-log"
-	cmdkit "gx/ipfs/QmceUdzxkimdYsgtX733uNgzf1DLHyBKN6ehGSp85ayppM/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/interface-go-ipfs-core/options"
+	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
-var log = logging.Logger("core/commands/object")
-
 var ObjectPatchCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
+	Helptext: cmds.HelpText{
 		Tagline: "Create a new merkledag object based on an existing one.",
 		ShortDescription: `
 'ipfs object patch <root> <cmd> <args>' is a plumbing command used to
@@ -28,7 +20,7 @@ build custom DAG objects. It mutates objects, creating new objects as a
 result. This is the Merkle-DAG version of modifying an object.
 `,
 	},
-	Arguments: []cmdkit.Argument{},
+	Arguments: []cmds.Argument{},
 	Subcommands: map[string]*cmds.Command{
 		"append-data": patchAppendDataCmd,
 		"add-link":    patchAddLinkCmd,
@@ -37,22 +29,8 @@ result. This is the Merkle-DAG version of modifying an object.
 	},
 }
 
-func objectMarshaler(res cmds.Response) (io.Reader, error) {
-	v, err := unwrapOutput(res.Output())
-	if err != nil {
-		return nil, err
-	}
-
-	o, ok := v.(*Object)
-	if !ok {
-		return nil, e.TypeErr(o, v)
-	}
-
-	return strings.NewReader(o.Hash + "\n"), nil
-}
-
 var patchAppendDataCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
+	Helptext: cmds.HelpText{
 		Tagline: "Append data to the data segment of a dag node.",
 		ShortDescription: `
 Append data to what already exists in the data segment in the given object.
@@ -66,65 +44,41 @@ data within an object. Objects have a max size of 1MB and objects larger than
 the limit will not be respected by the network.
 `,
 	},
-	Arguments: []cmdkit.Argument{
-		cmdkit.StringArg("root", true, false, "The hash of the node to modify."),
-		cmdkit.FileArg("data", true, false, "Data to append.").EnableStdin(),
+	Arguments: []cmds.Argument{
+		cmds.StringArg("root", true, false, "The hash of the node to modify."),
+		cmds.FileArg("data", true, false, "Data to append.").EnableStdin(),
 	},
-	Run: func(req cmds.Request, res cmds.Response) {
-		nd, err := req.InvocContext().GetNode()
+	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		root, err := path.ParsePath(req.StringArguments()[0])
+		root := path.New(req.Arguments[0])
+
+		file, err := cmdenv.GetFileArg(req.Files.Entries())
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		rootnd, err := core.Resolve(req.Context(), nd.Namesys, nd.Resolver, root)
+		p, err := api.Object().AppendData(req.Context, root, file)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		rtpb, ok := rootnd.(*dag.ProtoNode)
-		if !ok {
-			res.SetError(dag.ErrNotProtobuf, cmdkit.ErrNormal)
-			return
-		}
-
-		fi, err := req.Files().NextFile()
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		data, err := ioutil.ReadAll(fi)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		rtpb.SetData(append(rtpb.Data(), data...))
-
-		err = nd.DAG.Add(req.Context(), rtpb)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		res.SetOutput(&Object{Hash: rtpb.Cid().String()})
+		return cmds.EmitOnce(res, &Object{Hash: p.Cid().String()})
 	},
-	Type: Object{},
-	Marshalers: cmds.MarshalerMap{
-		cmds.Text: objectMarshaler,
+	Type: &Object{},
+	Encoders: cmds.EncoderMap{
+		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, obj *Object) error {
+			_, err := fmt.Fprintln(w, obj.Hash)
+			return err
+		}),
 	},
 }
 
 var patchSetDataCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
+	Helptext: cmds.HelpText{
 		Tagline: "Set the data field of an IPFS object.",
 		ShortDescription: `
 Set the data of an IPFS object from stdin or with the contents of a file.
@@ -134,127 +88,81 @@ Example:
     $ echo "my data" | ipfs object patch $MYHASH set-data
 `,
 	},
-	Arguments: []cmdkit.Argument{
-		cmdkit.StringArg("root", true, false, "The hash of the node to modify."),
-		cmdkit.FileArg("data", true, false, "The data to set the object to.").EnableStdin(),
+	Arguments: []cmds.Argument{
+		cmds.StringArg("root", true, false, "The hash of the node to modify."),
+		cmds.FileArg("data", true, false, "The data to set the object to.").EnableStdin(),
 	},
-	Run: func(req cmds.Request, res cmds.Response) {
-		nd, err := req.InvocContext().GetNode()
+	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		rp, err := path.ParsePath(req.StringArguments()[0])
+		root := path.New(req.Arguments[0])
+
+		file, err := cmdenv.GetFileArg(req.Files.Entries())
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		root, err := core.Resolve(req.Context(), nd.Namesys, nd.Resolver, rp)
+		p, err := api.Object().SetData(req.Context, root, file)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		rtpb, ok := root.(*dag.ProtoNode)
-		if !ok {
-			res.SetError(dag.ErrNotProtobuf, cmdkit.ErrNormal)
-			return
-		}
-
-		fi, err := req.Files().NextFile()
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		data, err := ioutil.ReadAll(fi)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		rtpb.SetData(data)
-
-		err = nd.DAG.Add(req.Context(), rtpb)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		res.SetOutput(&Object{Hash: rtpb.Cid().String()})
+		return cmds.EmitOnce(res, &Object{Hash: p.Cid().String()})
 	},
 	Type: Object{},
-	Marshalers: cmds.MarshalerMap{
-		cmds.Text: objectMarshaler,
+	Encoders: cmds.EncoderMap{
+		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *Object) error {
+			fmt.Fprintln(w, out.Hash)
+			return nil
+		}),
 	},
 }
 
 var patchRmLinkCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
-		Tagline: "Remove a link from an object.",
+	Helptext: cmds.HelpText{
+		Tagline: "Remove a link from a given object.",
 		ShortDescription: `
-Removes a link by the given name from root.
+Remove a Merkle-link from the given object and return the hash of the result.
 `,
 	},
-	Arguments: []cmdkit.Argument{
-		cmdkit.StringArg("root", true, false, "The hash of the node to modify."),
-		cmdkit.StringArg("link", true, false, "Name of the link to remove."),
+	Arguments: []cmds.Argument{
+		cmds.StringArg("root", true, false, "The hash of the node to modify."),
+		cmds.StringArg("name", true, false, "Name of the link to remove."),
 	},
-	Run: func(req cmds.Request, res cmds.Response) {
-		nd, err := req.InvocContext().GetNode()
+	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		rootp, err := path.ParsePath(req.Arguments()[0])
+		root := path.New(req.Arguments[0])
+
+		name := req.Arguments[1]
+		p, err := api.Object().RmLink(req.Context, root, name)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		root, err := core.Resolve(req.Context(), nd.Namesys, nd.Resolver, rootp)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		rtpb, ok := root.(*dag.ProtoNode)
-		if !ok {
-			res.SetError(dag.ErrNotProtobuf, cmdkit.ErrNormal)
-			return
-		}
-
-		path := req.Arguments()[1]
-
-		e := dagutils.NewDagEditor(rtpb, nd.DAG)
-
-		err = e.RmLink(req.Context(), path)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		nnode, err := e.Finalize(req.Context(), nd.DAG)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		nc := nnode.Cid()
-
-		res.SetOutput(&Object{Hash: nc.String()})
+		return cmds.EmitOnce(res, &Object{Hash: p.Cid().String()})
 	},
 	Type: Object{},
-	Marshalers: cmds.MarshalerMap{
-		cmds.Text: objectMarshaler,
+	Encoders: cmds.EncoderMap{
+		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *Object) error {
+			fmt.Fprintln(w, out.Hash)
+			return nil
+		}),
 	},
 }
 
+const (
+	createOptionName = "create"
+)
+
 var patchAddLinkCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
+	Helptext: cmds.HelpText{
 		Tagline: "Add a link to a given object.",
 		ShortDescription: `
 Add a Merkle-link to the given object and return the hash of the result.
@@ -269,83 +177,42 @@ This takes an empty directory, and adds a link named 'foo' under it, pointing
 to a file containing 'bar', and returns the hash of the new object.
 `,
 	},
-	Arguments: []cmdkit.Argument{
-		cmdkit.StringArg("root", true, false, "The hash of the node to modify."),
-		cmdkit.StringArg("name", true, false, "Name of link to create."),
-		cmdkit.StringArg("ref", true, false, "IPFS object to add link to."),
+	Arguments: []cmds.Argument{
+		cmds.StringArg("root", true, false, "The hash of the node to modify."),
+		cmds.StringArg("name", true, false, "Name of link to create."),
+		cmds.StringArg("ref", true, false, "IPFS object to add link to."),
 	},
-	Options: []cmdkit.Option{
-		cmdkit.BoolOption("create", "p", "Create intermediary nodes."),
+	Options: []cmds.Option{
+		cmds.BoolOption(createOptionName, "p", "Create intermediary nodes."),
 	},
-	Run: func(req cmds.Request, res cmds.Response) {
-		nd, err := req.InvocContext().GetNode()
+	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
+		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		rootp, err := path.ParsePath(req.Arguments()[0])
+		root := path.New(req.Arguments[0])
+		name := req.Arguments[1]
+		child := path.New(req.Arguments[2])
+
+		create, _ := req.Options[createOptionName].(bool)
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		root, err := core.Resolve(req.Context(), nd.Namesys, nd.Resolver, rootp)
+		p, err := api.Object().AddLink(req.Context, root, name, child,
+			options.Object.Create(create))
 		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
+			return err
 		}
 
-		rtpb, ok := root.(*dag.ProtoNode)
-		if !ok {
-			res.SetError(dag.ErrNotProtobuf, cmdkit.ErrNormal)
-			return
-		}
-
-		npath := req.Arguments()[1]
-		childp, err := path.ParsePath(req.Arguments()[2])
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		create, _, err := req.Option("create").Bool()
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		var createfunc func() *dag.ProtoNode
-		if create {
-			createfunc = ft.EmptyDirNode
-		}
-
-		e := dagutils.NewDagEditor(rtpb, nd.DAG)
-
-		childnd, err := core.Resolve(req.Context(), nd.Namesys, nd.Resolver, childp)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		err = e.InsertNodeAtPath(req.Context(), npath, childnd, createfunc)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		nnode, err := e.Finalize(req.Context(), nd.DAG)
-		if err != nil {
-			res.SetError(err, cmdkit.ErrNormal)
-			return
-		}
-
-		nc := nnode.Cid()
-
-		res.SetOutput(&Object{Hash: nc.String()})
+		return cmds.EmitOnce(res, &Object{Hash: p.Cid().String()})
 	},
 	Type: Object{},
-	Marshalers: cmds.MarshalerMap{
-		cmds.Text: objectMarshaler,
+	Encoders: cmds.EncoderMap{
+		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *Object) error {
+			fmt.Fprintln(w, out.Hash)
+			return nil
+		}),
 	},
 }

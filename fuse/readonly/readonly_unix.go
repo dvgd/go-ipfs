@@ -1,4 +1,4 @@
-// +build linux darwin freebsd netbsd openbsd
+// +build linux darwin freebsd
 // +build !nofuse
 
 package readonly
@@ -11,17 +11,15 @@ import (
 	"syscall"
 
 	core "github.com/ipfs/go-ipfs/core"
-	mdag "github.com/ipfs/go-ipfs/merkledag"
-	path "github.com/ipfs/go-ipfs/path"
-	uio "github.com/ipfs/go-ipfs/unixfs/io"
-	ftpb "github.com/ipfs/go-ipfs/unixfs/pb"
+	mdag "github.com/ipfs/go-merkledag"
+	path "github.com/ipfs/go-path"
+	ft "github.com/ipfs/go-unixfs"
+	uio "github.com/ipfs/go-unixfs/io"
 
-	logging "gx/ipfs/QmRb5jh8z2E8hMGN2tkvs1yHynUanqnZ3UeKwgN1i9P1F8/go-log"
-	proto "gx/ipfs/QmZ4Qi3GaRbjcx28Sme5eMH7RQjGkt8wHxt2a65oLaeFEV/gogo-protobuf/proto"
-	fuse "gx/ipfs/QmaFNtBAXX4nVMQWbUqNysXyhevUj1k4B1y5uS45LC7Vw9/fuse"
-	fs "gx/ipfs/QmaFNtBAXX4nVMQWbUqNysXyhevUj1k4B1y5uS45LC7Vw9/fuse/fs"
-	ipld "gx/ipfs/Qme5bWv7wtjUNGsK2BNGVUFPKiuxWrsqrtvYwCLRw8YFES/go-ipld-format"
-	lgbl "gx/ipfs/Qmf9JgVLz46pxPXwG2eWSJpkqVCcjD4rp7zCRi2KP6GTNB/go-libp2p-loggables"
+	fuse "bazil.org/fuse"
+	fs "bazil.org/fuse/fs"
+	ipld "github.com/ipfs/go-ipld-format"
+	logging "github.com/ipfs/go-log"
 )
 
 var log = logging.Logger("fuse/ipfs")
@@ -93,13 +91,16 @@ func (*Root) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 type Node struct {
 	Ipfs   *core.IpfsNode
 	Nd     ipld.Node
-	cached *ftpb.Data
+	cached *ft.FSNode
 }
 
 func (s *Node) loadData() error {
 	if pbnd, ok := s.Nd.(*mdag.ProtoNode); ok {
-		s.cached = new(ftpb.Data)
-		return proto.Unmarshal(pbnd.Data(), s.cached)
+		fsn, err := ft.FSNodeFromBytes(pbnd.Data())
+		if err != nil {
+			return err
+		}
+		s.cached = fsn
 	}
 	return nil
 }
@@ -119,23 +120,23 @@ func (s *Node) Attr(ctx context.Context, a *fuse.Attr) error {
 			return fmt.Errorf("readonly: loadData() failed: %s", err)
 		}
 	}
-	switch s.cached.GetType() {
-	case ftpb.Data_Directory, ftpb.Data_HAMTShard:
+	switch s.cached.Type() {
+	case ft.TDirectory, ft.THAMTShard:
 		a.Mode = os.ModeDir | 0555
-	case ftpb.Data_File:
-		size := s.cached.GetFilesize()
+	case ft.TFile:
+		size := s.cached.FileSize()
 		a.Mode = 0444
 		a.Size = uint64(size)
 		a.Blocks = uint64(len(s.Nd.Links()))
-	case ftpb.Data_Raw:
+	case ft.TRaw:
 		a.Mode = 0444
-		a.Size = uint64(len(s.cached.GetData()))
+		a.Size = uint64(len(s.cached.Data()))
 		a.Blocks = uint64(len(s.Nd.Links()))
-	case ftpb.Data_Symlink:
+	case ft.TSymlink:
 		a.Mode = 0777 | os.ModeSymlink
-		a.Size = uint64(len(s.cached.GetData()))
+		a.Size = uint64(len(s.cached.Data()))
 	default:
-		return fmt.Errorf("Invalid data type - %s", s.cached.GetType())
+		return fmt.Errorf("invalid data type - %s", s.cached.Type())
 	}
 	return nil
 }
@@ -184,7 +185,7 @@ func (s *Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		}
 		nd, err := s.Ipfs.DAG.Get(ctx, lnk.Cid)
 		if err != nil {
-			log.Warning("error fetching directory child node: ", err)
+			log.Warn("error fetching directory child node: ", err)
 		}
 
 		t := fuse.DT_Unknown
@@ -192,21 +193,20 @@ func (s *Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		case *mdag.RawNode:
 			t = fuse.DT_File
 		case *mdag.ProtoNode:
-			var data ftpb.Data
-			if err := proto.Unmarshal(nd.Data(), &data); err != nil {
-				log.Warning("failed to unmarshal protonode data field:", err)
+			if fsn, err := ft.FSNodeFromBytes(nd.Data()); err != nil {
+				log.Warn("failed to unmarshal protonode data field:", err)
 			} else {
-				switch data.GetType() {
-				case ftpb.Data_Directory, ftpb.Data_HAMTShard:
+				switch fsn.Type() {
+				case ft.TDirectory, ft.THAMTShard:
 					t = fuse.DT_Dir
-				case ftpb.Data_File, ftpb.Data_Raw:
+				case ft.TFile, ft.TRaw:
 					t = fuse.DT_File
-				case ftpb.Data_Symlink:
+				case ft.TSymlink:
 					t = fuse.DT_Link
-				case ftpb.Data_Metadata:
+				case ft.TMetadata:
 					log.Error("metadata object in fuse should contain its wrapped type")
 				default:
-					log.Error("unrecognized protonode data type: ", data.GetType())
+					log.Error("unrecognized protonode data type: ", fsn.Type())
 				}
 			}
 		}
@@ -224,46 +224,37 @@ func (s *Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 }
 
 func (s *Node) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
-	// TODO: is nil the right response for 'bug off, we aint got none' ?
+	// TODO: is nil the right response for 'bug off, we ain't got none' ?
 	resp.Xattr = nil
 	return nil
 }
 
 func (s *Node) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (string, error) {
-	if s.cached == nil || s.cached.GetType() != ftpb.Data_Symlink {
+	if s.cached == nil || s.cached.Type() != ft.TSymlink {
 		return "", fuse.Errno(syscall.EINVAL)
 	}
-	return string(s.cached.GetData()), nil
+	return string(s.cached.Data()), nil
 }
 
 func (s *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	c := s.Nd.Cid()
-
-	// setup our logging event
-	lm := make(lgbl.DeferredMap)
-	lm["fs"] = "ipfs"
-	lm["key"] = func() interface{} { return c.String() }
-	lm["req_offset"] = req.Offset
-	lm["req_size"] = req.Size
-	defer log.EventBegin(ctx, "fuseRead", lm).Done()
-
 	r, err := uio.NewDagReader(ctx, s.Nd, s.Ipfs.DAG)
 	if err != nil {
 		return err
 	}
-	o, err := r.Seek(req.Offset, io.SeekStart)
-	lm["res_offset"] = o
+	_, err = r.Seek(req.Offset, io.SeekStart)
 	if err != nil {
 		return err
 	}
-
-	buf := resp.Data[:min(req.Size, int(int64(r.Size())-req.Offset))]
+	// Data has a capacity of Size
+	buf := resp.Data[:int(req.Size)]
 	n, err := io.ReadFull(r, buf)
-	if err != nil && err != io.EOF {
+	resp.Data = buf[:n]
+	switch err {
+	case nil, io.EOF, io.ErrUnexpectedEOF:
+	default:
 		return err
 	}
 	resp.Data = resp.Data[:n]
-	lm["res_size"] = n
 	return nil // may be non-nil / not succeeded
 }
 
@@ -286,10 +277,3 @@ type roNode interface {
 }
 
 var _ roNode = (*Node)(nil)
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

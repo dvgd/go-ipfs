@@ -1,16 +1,13 @@
-// +build linux darwin freebsd netbsd openbsd
-// +build nofuse
+// +build !windows,nofuse
 
 package commands
 
 import (
-	cmds "github.com/ipfs/go-ipfs/commands"
-
-	"gx/ipfs/QmceUdzxkimdYsgtX733uNgzf1DLHyBKN6ehGSp85ayppM/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
 )
 
 var MountCmd = &cmds.Command{
-	Helptext: cmdkit.HelpText{
+	Helptext: cmds.HelpText{
 		Tagline: "Mounts ipfs to the filesystem (disabled).",
 		ShortDescription: `
 This version of ipfs is compiled without fuse support, which is required
